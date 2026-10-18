@@ -84,7 +84,11 @@ impl State {
         width: u32,
         height: u32,
     ) -> Result<Option<capture::Screen>> {
-        fallback::ensure(&self.journal.token, width, height, true)
+        // 不满足条件（不是 niri、内核太旧、辅助程序没启用）时，原因本身说的是虚拟屏，
+        // 先说清楚真正的问题是本机没有屏。
+        fallback::ensure(&self.journal.token, width, height, true).map_err(|error| {
+            anyhow::anyhow!("本机没有可用的显示器，也无法自动添加兜底屏：{error:#}")
+        })
     }
 
     fn initial_resolution(
