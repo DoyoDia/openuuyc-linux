@@ -1236,6 +1236,8 @@ impl crate::ui::App for DeviceCenterApp {
     }
 
     fn on_exit(&mut self) {
+        // 先说一声要退出了：之后的会话收尾不必再为无屏去建兜底屏。
+        crate::features::host::displays::fallback::exiting();
         for session in &self.viewers.active {
             session.handle.request_close();
         }
