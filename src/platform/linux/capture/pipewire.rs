@@ -97,6 +97,9 @@ struct SpaMetaRegion {
 const STREAM_EVENTS_VERSION: u32 = 2;
 const DIRECTION_INPUT: u32 = 0;
 const FLAG_AUTOCONNECT: u32 = 1 << 0;
+/// `PW_STREAM_FLAG_MAP_BUFFERS`: PipeWire maps the buffers a producer marks
+/// mappable before handing them over.
+const FLAG_MAP_BUFFERS: u32 = 1 << 2;
 // Shared-memory buffers are mapped explicitly; DMA-BUF is imported through VA.
 const STATE_ERROR: c_int = -1;
 const STATE_UNCONNECTED: c_int = 0;
@@ -700,8 +703,8 @@ struct State {
     /// Buffers the compositor delivered, readable or not; with `unreadable`,
     /// what [`Stream::stage`] tells a user whose first picture never came.
     delivered: u64,
-    /// The data type of the latest buffer that held no readable picture.
-    unreadable: Option<u32>,
+    /// Why the latest buffer held no readable picture, with its data type.
+    unreadable: Option<String>,
     /// Output geometry request from the capture worker: `(quality, maximum)`.
     /// The GPU converter derives the final size from the picture's own
     /// dimensions, exactly as the CPU path's `output()` does, so a controller
@@ -813,8 +816,10 @@ unsafe extern "C" fn on_process(data: *mut c_void) {
         let state = lock(&callbacks.shared.state);
         (state.format, state.target)
     };
-    let picture =
-        format.and_then(|format| unsafe { read_picture((*newest).buffer, format, target) });
+    let picture = match format {
+        Some(format) => unsafe { read_picture((*newest).buffer, format, target) },
+        None => Err("画面格式还没协商".into()),
+    };
     // What the buffer carried, for the stage report when no picture comes of it.
     let kind = unsafe {
         let buffer = (*newest).buffer;
@@ -827,27 +832,31 @@ unsafe extern "C" fn on_process(data: *mut c_void) {
     if state.delivered == 1 {
         tracing::info!(
             data_type = kind,
-            readable = picture.is_some(),
+            readable = picture.is_ok(),
             "PipeWire first buffer delivered"
         );
     }
     match picture {
-        Some(picture) => {
+        Ok(picture) => {
             state.picture = Some(picture);
             state.sequence += 1;
             drop(state);
             callbacks.shared.changed.notify_all();
         }
-        None => {
+        Err(reason) => {
             if state.unreadable.is_none() {
-                tracing::warn!(data_type = kind, "PipeWire buffer held no readable picture");
+                tracing::warn!(data_type = kind, %reason, "PipeWire buffer held no readable picture");
             }
-            state.unreadable = Some(kind.unwrap_or(u32::MAX));
+            state.unreadable = Some(match kind {
+                Some(kind) => format!("数据类型 {kind}：{reason}"),
+                None => reason,
+            });
         }
     }
 }
 
-/// Copy a buffer's pixels out as tightly packed BGRA with opaque alpha.
+/// Copy a buffer's pixels out as tightly packed BGRA with opaque alpha, or
+/// say why the buffer held none.
 ///
 /// # Safety
 /// `buffer` must be a buffer the stream just dequeued.
@@ -855,34 +864,42 @@ unsafe fn read_picture(
     buffer: *mut SpaBuffer,
     negotiated: NegotiatedFormat,
     target: Option<(i32, (u32, u32))>,
-) -> Option<Picture> {
+) -> std::result::Result<Picture, String> {
     let NegotiatedFormat {
         format,
         width,
         height,
         modifier: _,
     } = negotiated;
+    if buffer.is_null() {
+        return Err("缓冲为空".into());
+    }
     let buffer = unsafe { &*buffer };
     if buffer.n_datas == 0 || buffer.datas.is_null() {
-        return None;
+        return Err("缓冲里没有数据块".into());
     }
     let data = unsafe { &*buffer.datas };
     if data.kind == DATA_MEM_DMABUF {
-        return match read_dmabuf_picture(buffer, data, negotiated, target) {
-            Ok(picture) => Some(picture),
-            Err(error) => {
-                tracing::warn!(%error, "DMA-BUF 导入失败");
-                None
-            }
-        };
+        return read_dmabuf_picture(buffer, data, negotiated, target).map_err(|error| {
+            tracing::warn!(%error, "DMA-BUF 导入失败");
+            format!("DMA-BUF 导入失败：{error:#}")
+        });
     }
-    if data.data.is_null() || data.chunk.is_null() {
-        // A DMA-BUF was not mapped for the CPU. Asking the portal for one does
-        // not help: Hyprland's ScreenCast offers only MemFd, so this stays the
-        // path a GPU encoder would need to import through PipeWire directly.
-        tracing::debug!(data_type = data.kind, "PipeWire buffer is not CPU-mappable");
-        return None;
+    if data.chunk.is_null() {
+        return Err("缓冲没有 chunk".into());
     }
+    // PipeWire maps a buffer only when its producer marks it mappable. KWin's
+    // shared-memory buffers are not marked, so they arrive as a bare MemFd
+    // and are mapped here (issue #32).
+    let mapped;
+    let source: &[u8] = if !data.data.is_null() {
+        unsafe { std::slice::from_raw_parts(data.data.cast::<u8>(), data.maxsize as usize) }
+    } else if data.kind == DATA_MEM_FD && data.fd >= 0 {
+        mapped = MemFdMap::new(data.fd as i32, data.mapoffset, data.maxsize)?;
+        mapped.bytes()
+    } else {
+        return Err("缓冲没有映射到内存，也不是能自己映射的 MemFd".into());
+    };
     let chunk = unsafe { &*data.chunk };
     // The type the portal actually chose, which is the only way to tell whether
     // a DMA-BUF request was honoured or quietly answered with shared memory.
@@ -897,9 +914,71 @@ unsafe fn read_picture(
         width as usize * 4
     };
     let base = (chunk.offset % data.maxsize.max(1)) as usize;
-    let source =
-        unsafe { std::slice::from_raw_parts(data.data.cast::<u8>(), data.maxsize as usize) };
-    copy_picture_pixels(buffer, source, base, stride, format, width, height)
+    copy_picture_pixels(buffer, source, base, stride, format, width, height).ok_or_else(|| {
+        format!(
+            "缓冲放不下 {width}×{height} 的画面（行宽 {stride}，偏移 {base}，大小 {}）",
+            source.len()
+        )
+    })
+}
+
+/// A read-only mapping of a MemFd buffer for one frame.
+struct MemFdMap {
+    pointer: *mut c_void,
+    length: usize,
+    /// Where the buffer starts inside the mapping: `mmap` wants a
+    /// page-aligned offset, the buffer's `mapoffset` need not be one.
+    start: usize,
+    size: usize,
+}
+
+impl MemFdMap {
+    fn new(fd: i32, offset: u32, size: u32) -> std::result::Result<Self, String> {
+        if size == 0 {
+            return Err("MemFd 缓冲大小为 0".into());
+        }
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as u64;
+        let aligned = u64::from(offset) / page * page;
+        let start = (u64::from(offset) - aligned) as usize;
+        let length = start + size as usize;
+        // SAFETY: a read-only shared mapping of a descriptor PipeWire keeps
+        // open while the buffer is dequeued; it is unmapped on drop, before
+        // the buffer goes back.
+        let pointer = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                length,
+                libc::PROT_READ,
+                libc::MAP_SHARED,
+                fd,
+                aligned as libc::off_t,
+            )
+        };
+        if pointer == libc::MAP_FAILED {
+            return Err(format!(
+                "映射 MemFd 缓冲失败：{}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(Self {
+            pointer,
+            length,
+            start,
+            size: size as usize,
+        })
+    }
+
+    fn bytes(&self) -> &[u8] {
+        // SAFETY: the mapping covers `start + size` bytes and lives as long
+        // as `self`.
+        unsafe { std::slice::from_raw_parts(self.pointer.cast::<u8>().add(self.start), self.size) }
+    }
+}
+
+impl Drop for MemFdMap {
+    fn drop(&mut self) {
+        unsafe { libc::munmap(self.pointer, self.length) };
+    }
 }
 
 fn copy_picture_pixels(
@@ -1102,7 +1181,7 @@ impl Stream {
                     this.stream,
                     DIRECTION_INPUT,
                     node,
-                    FLAG_AUTOCONNECT,
+                    FLAG_AUTOCONNECT | FLAG_MAP_BUFFERS,
                     params.as_mut_ptr(),
                     params.len() as u32,
                 );
@@ -1131,7 +1210,7 @@ impl Stream {
             state.streaming,
             state.format.map(|format| (format.width, format.height)),
             state.delivered,
-            state.unreadable,
+            state.unreadable.clone(),
         )
     }
 
@@ -1168,7 +1247,7 @@ fn stage(
     streaming: bool,
     format: Option<(u32, u32)>,
     delivered: u64,
-    unreadable: Option<u32>,
+    unreadable: Option<String>,
 ) -> String {
     match (streaming, format, delivered, unreadable) {
         (false, None, _, _) => "门户的画面流没有开始传输".into(),
@@ -1176,8 +1255,8 @@ fn stage(
         (_, Some((width, height)), 0, _) => format!(
             "画面格式已协商（{width}×{height}），但合成器还没送来画面；有的桌面在画面静止时不发帧"
         ),
-        (_, Some(_), delivered, Some(kind)) => {
-            format!("合成器送来了 {delivered} 个缓冲，但读不出画面（数据类型 {kind}）")
+        (_, Some(_), delivered, Some(reason)) => {
+            format!("合成器送来了 {delivered} 个缓冲，但读不出画面（{reason}）")
         }
         (_, Some(_), delivered, None) => format!("合成器送来了 {delivered} 个缓冲，画面还在处理"),
     }
@@ -1217,7 +1296,15 @@ mod tests {
         assert_eq!(stage(false, None, 0, None), "门户的画面流没有开始传输");
         assert!(stage(true, None, 0, None).contains("没有协商出画面格式"));
         assert!(stage(true, Some((1920, 1080)), 0, None).contains("1920×1080"));
-        assert!(stage(true, Some((1920, 1080)), 3, Some(3)).contains("数据类型 3"));
+        assert!(
+            stage(
+                true,
+                Some((1920, 1080)),
+                3,
+                Some("数据类型 2：缓冲为空".into())
+            )
+            .contains("数据类型 2：缓冲为空")
+        );
     }
 
     #[test]
@@ -1245,6 +1332,59 @@ mod tests {
         let choices = enum_format().aligned();
         let size = unsafe { choices.as_ptr().cast::<u32>().read() } as usize;
         assert_eq!((size + 8) % 8, 0);
+    }
+
+    /// KWin hands over shared-memory buffers PipeWire did not map: a MemFd
+    /// with no data pointer. They are mapped here, from a `mapoffset` that is
+    /// not page aligned, and read like any other buffer (issue #32).
+    #[test]
+    fn an_unmapped_memfd_buffer_is_mapped_and_read() {
+        use std::io::{Seek as _, SeekFrom, Write as _};
+        use std::os::fd::{AsRawFd as _, FromRawFd as _};
+        let fd = unsafe { libc::memfd_create(c"openuuyc-test".as_ptr(), 0) };
+        assert!(fd >= 0, "memfd_create");
+        let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+        // Two 2×1 BGRX rows at offset 100, stride 8.
+        let offset = 100u32;
+        let pixels = [1u8, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255];
+        file.seek(SeekFrom::Start(u64::from(offset))).expect("seek");
+        file.write_all(&pixels).expect("write");
+        let mut chunk = SpaChunk {
+            offset: 0,
+            size: pixels.len() as u32,
+            stride: 8,
+            flags: 0,
+        };
+        let mut data = SpaData {
+            kind: DATA_MEM_FD,
+            flags: 0,
+            fd: i64::from(file.as_raw_fd()),
+            mapoffset: offset,
+            maxsize: pixels.len() as u32,
+            data: std::ptr::null_mut(),
+            chunk: &mut chunk,
+        };
+        let mut buffer = SpaBuffer {
+            n_metas: 0,
+            n_datas: 1,
+            metas: std::ptr::null_mut(),
+            datas: &mut data,
+        };
+        let format = NegotiatedFormat {
+            format: VIDEO_BGRX,
+            width: 2,
+            height: 2,
+            modifier: None,
+        };
+        let picture = unsafe { read_picture(&mut buffer, format, None) }.expect("picture");
+        assert_eq!((picture.width, picture.height), (2, 2));
+        assert_eq!(picture.pixels, pixels);
+        // A buffer too small for the format says so instead of failing quietly.
+        data.maxsize = 8;
+        let Err(error) = (unsafe { read_picture(&mut buffer, format, None) }) else {
+            panic!("a buffer too small for the format was read");
+        };
+        assert!(error.contains("放不下"), "{error}");
     }
 
     #[test]
