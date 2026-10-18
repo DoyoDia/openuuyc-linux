@@ -299,7 +299,10 @@ fn recover(path: &std::path::Path) -> Result<()> {
         has_saved_preferences: false,
         preference_path: None,
         driver: None,
+        #[cfg(windows)]
         fallback_pin: fallback::pin()?,
+        #[cfg(not(windows))]
+        fallback_pin: None,
         render_adapter: None,
         dirty: true,
         restoring: true,

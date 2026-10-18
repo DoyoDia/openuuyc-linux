@@ -198,6 +198,15 @@ impl Session {
         target: &mut Option<Target>,
     ) -> Result<(i32, i32)> {
         let state = lock(&self.state);
+        // Linux 的拓扑分不出虚拟屏，兜底屏要靠进程里记着的 identity 认：认出来
+        // 之后按 Windows 那套语义报成虚拟屏（kind 1），共享逻辑才走得到同一条路。
+        #[cfg(not(windows))]
+        if let Some(fallback) = fallback::identity()
+            && screen.identity.as_deref() == Some(fallback.as_str())
+            && let Some(target) = target.as_mut()
+        {
+            target.virtual_provider = Some(display::topology::VirtualProvider::OpenUuyc);
+        }
         let Some(owned) = state
             .journal
             .owned
@@ -273,13 +282,25 @@ impl Session {
             "本次会话不允许添加虚拟屏"
         );
         self.run(move |state, lease| {
-            let screens = capture::screens()?;
+            // 零输出时枚举会报错，而加虚拟屏正是为了这种机器，按空清单继续；但只
+            // 在拓扑里确实一块启用的输出都没有时才这样，别的错误（比如连不上 X）
+            // 照常报出来。
+            let screens = match capture::screens() {
+                Ok(screens) => screens,
+                Err(error) => {
+                    ensure!(
+                        Topology::query(true)?.metadata()?.iter().all(|t| !t.active),
+                        "{error:#}"
+                    );
+                    Vec::new()
+                }
+            };
             // 主控报的是它自己那块屏的尺寸；它没报就退回本机第一块屏的尺寸。
             let (width, height) = resolutions
                 .first()
                 .copied()
                 .or_else(|| screens.first().map(|s| (s.width, s.height)))
-                .context("没有可用的显示器")?;
+                .unwrap_or((1920, 1080));
             let mut modes = resolutions;
             if modes.is_empty() {
                 modes.push((width, height));
@@ -409,6 +430,7 @@ impl Session {
         .await
     }
     /// The singleton fallback is owned by the machine, never journal.owned.
+    #[cfg(windows)]
     pub(crate) async fn ensure_fallback(
         &self,
         previous: capture::Screen,
@@ -428,6 +450,23 @@ impl Session {
         })
         .await
     }
+    /// Linux 的兜底屏不归驱动，归辅助程序那条连接：进程里留一块，连接断掉只是
+    /// 放弃使用权。
+    #[cfg(not(windows))]
+    pub(crate) async fn ensure_fallback(
+        &self,
+        previous: capture::Screen,
+    ) -> Result<Option<capture::Screen>> {
+        self.run(move |state, lease| {
+            if state.journal.super_baseline.is_some() || !state.journal.owned.is_empty() {
+                return Ok(None);
+            }
+            ensure!(lease.requested(), "显示操作已取消");
+            fallback::ensure(&state.journal.token, previous.width, previous.height, true)
+        })
+        .await
+    }
+    #[cfg(windows)]
     pub(crate) fn fallback_screen(&self) -> Result<Option<capture::Screen>> {
         let mut state = lock(&self.state);
         if state
@@ -445,6 +484,17 @@ impl Session {
             None => Ok(None),
         }
     }
+    #[cfg(not(windows))]
+    pub(crate) fn fallback_screen(&self) -> Result<Option<capture::Screen>> {
+        let screen = fallback::screen()?;
+        if screen.is_some() {
+            // 重连时兜底屏已经在了，不会再走 `ensure`，这里补上使用权。
+            let token = lock(&self.state).journal.token.clone();
+            fallback::claim(&token);
+        }
+        Ok(screen)
+    }
+    #[cfg(windows)]
     pub(crate) fn allows_fallback_retirement(&self) -> bool {
         let state = lock(&self.state);
         state.journal.owned.is_empty()
@@ -455,6 +505,14 @@ impl Session {
                     .is_ok_and(|(_, users)| users <= u32::from(driver.owns_fallback_pin()))
             })
     }
+    #[cfg(not(windows))]
+    pub(crate) fn allows_fallback_retirement(&self) -> bool {
+        let state = lock(&self.state);
+        state.journal.owned.is_empty()
+            && state.journal.super_baseline.is_none()
+            && fallback::allows_retirement()
+    }
+    #[cfg(windows)]
     pub(crate) async fn retire_fallback(&self, replacement: String) -> Result<bool> {
         self.run(move |state, _| {
             if !state.journal.owned.is_empty() || state.journal.super_baseline.is_some() {
@@ -465,6 +523,31 @@ impl Session {
             if removed {
                 // A session that changed modes must not later restore the
                 // fallback baseline after it has been deliberately retired.
+                let available = Topology::query(false)?.metadata()?;
+                state.journal.baseline.targets.retain(|old| {
+                    retiring.as_deref() != Some(old.identity.as_str())
+                        && available
+                            .iter()
+                            .any(|t| t.available && t.identity == old.identity)
+                });
+                if state.dirty {
+                    state.save()?;
+                }
+            }
+            Ok(removed)
+        })
+        .await
+    }
+    #[cfg(not(windows))]
+    pub(crate) async fn retire_fallback(&self, replacement: String) -> Result<bool> {
+        self.run(move |state, _| {
+            if !state.journal.owned.is_empty() || state.journal.super_baseline.is_some() {
+                return Ok(false);
+            }
+            let retiring = fallback::screen()?.and_then(|s| s.identity);
+            let removed = fallback::retire(&replacement)?;
+            if removed {
+                // 回收之后不能再把兜底屏的旧布局当成要恢复的基线。
                 let available = Topology::query(false)?.metadata()?;
                 state.journal.baseline.targets.retain(|old| {
                     retiring.as_deref() != Some(old.identity.as_str())
@@ -561,6 +644,11 @@ impl Session {
                 .any(|o| o.identity.as_deref() == Some(target.identity.as_str()))
             {
                 return state.resize_virtual_compositor(&target.identity, width, height, lease);
+            }
+            // 兜底屏同样不在 VKMS 的模式表里，改尺寸要走合成器。
+            if fallback::identity().as_deref() == Some(target.identity.as_str()) {
+                ensure!(lease.requested(), "显示操作已取消");
+                return fallback::resize(&target.identity, width, height);
             }
             state.begin()?;
             let previous = state.journal.mode_changes.clone();
@@ -788,6 +876,7 @@ fn restore_dpi(values: &[(String, u32)]) -> Result<()> {
 }
 
 impl State {
+    #[cfg(windows)]
     fn fallback_driver(&mut self) -> Result<&Driver> {
         if self
             .fallback_pin
@@ -1140,7 +1229,18 @@ impl State {
         self.forget_lost_virtual()?;
         let (width, height) = (spec.width, spec.height);
         validate_modes(&[(width, height)])?;
-        let screens = capture::screens()?;
+        let screens = match capture::screens() {
+            Ok(screens) => screens,
+            Err(error) => {
+                // 零输出时枚举会报错（「一块屏都没有」），而那正是可以加虚拟屏的
+                // 状态；真的连不上 X11 时这个 query 会给出原因。
+                ensure!(
+                    Topology::query(true)?.metadata()?.iter().all(|t| !t.active),
+                    "{error:#}"
+                );
+                Vec::new()
+            }
+        };
         let before: Vec<String> = screens.iter().filter_map(|s| s.identity.clone()).collect();
         ensure!(
             screens.len() < 5
@@ -1570,14 +1670,45 @@ impl State {
         // 虚拟屏和 X11 的布局恢复没关系，所以放在最前面：`dirty` 为假时下面会直接
         // 返回，而那些连接器还是得还回去。
         #[cfg(not(windows))]
-        if let Some(mut session) = self.virtual_display.take() {
-            session.release_all();
+        {
+            // 先确认机器上还有别的屏，再把本次会话的虚拟屏还回去：它可能是拔掉物理
+            // 屏之后唯一一块屏。查不到拓扑时不做兜底，也不拦着收尾。
+            let no_other_display = !self.journal.owned.is_empty()
+                && Topology::query(true)
+                    .and_then(|topology| topology.metadata())
+                    .is_ok_and(|targets| {
+                        targets.iter().all(|t| {
+                            !t.available
+                                || !t.active
+                                || t.virtual_provider
+                                    == Some(display::topology::VirtualProvider::Uu)
+                                || self
+                                    .journal
+                                    .owned
+                                    .iter()
+                                    .any(|o| o.identity.as_deref() == Some(t.identity.as_str()))
+                        })
+                    });
+            if let Some(mut session) = self.virtual_display.take() {
+                session.release_all();
+            }
+            // 退出时兜底屏随进程一起被收回，建了也白建，还会拖慢退出。
+            if no_other_display
+                && !fallback::is_exiting()
+                && let Err(error) = fallback::ensure(&self.journal.token, 1920, 1080, false)
+            {
+                tracing::warn!(%error, "无屏兜底未能在归还虚拟屏之前建立");
+            }
+            // 兜底屏是机器所有的：连接结束只是放弃使用权，屏留着；没人连着时由后台
+            // 维护在别的屏回来后收掉。
+            fallback::release(&self.journal.token);
         }
         if !self.dirty {
             self.driver.take();
             return Ok(());
         }
         self.restore_layout(&self.journal.baseline, &self.journal.dpi, false)?;
+        #[cfg(windows)]
         if !self.journal.owned.is_empty() && self.fallback_pin.is_some() {
             let leaving: Vec<_> = self
                 .journal

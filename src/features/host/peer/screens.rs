@@ -33,9 +33,20 @@ pub(super) struct Inventory {
 impl Inventory {
     pub fn read() -> Result<Self> {
         let topology = Topology::query(false)?;
+        let targets = topology.targets()?;
+        // Linux：零输出是合法状态，兜底屏要处理的正是它。枚举不到屏时按空清单
+        // 继续；连 X11 都连不上时上面的 query 已经报过错了。
+        #[cfg(windows)]
+        let screens = capture::screens()?;
+        #[cfg(not(windows))]
+        let screens = match capture::screens() {
+            Ok(screens) => screens,
+            Err(_) if targets.iter().all(|t| !t.active) => Vec::new(),
+            Err(error) => return Err(error),
+        };
         Ok(Self {
-            targets: topology.targets()?,
-            screens: capture::screens()?,
+            targets,
+            screens,
             layout: Topology::query(true).and_then(|topology| topology.snapshot()),
         })
     }

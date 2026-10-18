@@ -23,16 +23,6 @@ pub(crate) fn maintaining() -> bool {
     false
 }
 
-pub(crate) mod install {
-    use super::*;
-
-    /// No service is ever installed, so the portable client does its own
-    /// background upkeep.
-    pub(crate) fn running() -> Result<bool> {
-        Ok(false)
-    }
-}
-
 pub(crate) mod vault {
     use super::*;
 
