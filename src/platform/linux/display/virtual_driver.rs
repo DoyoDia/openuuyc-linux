@@ -14,27 +14,9 @@ pub(crate) struct Watchdog {
     pub timeout: u32,
 }
 
-/// The persistent headless screen's identity, shared with Windows.
-pub(crate) const FALLBACK_ID: Uuid = Uuid::from_u128(0x7d7e98aa_6992_46e0_a833_ca92a0ab8563);
-
 pub(crate) enum Driver {}
 impl Driver {
-    pub(crate) fn persistent_supported(&self) -> bool {
-        match *self {}
-    }
-    pub(crate) fn add_fallback(&self, _width: u32, _height: u32, _hz: u32) -> Result<Output> {
-        match *self {}
-    }
     pub(crate) fn fallback(&self) -> Result<Option<Output>> {
-        match *self {}
-    }
-    pub(crate) fn pin_fallback(&self) -> Result<()> {
-        match *self {}
-    }
-    pub(crate) fn owns_fallback_pin(&self) -> bool {
-        match *self {}
-    }
-    pub(crate) fn fallback_state(&self) -> Result<(Option<Output>, u32)> {
         match *self {}
     }
     pub(crate) fn device_instance() -> Result<String> {
@@ -58,11 +40,6 @@ impl Driver {
     pub(crate) fn ping(&self) -> Result<()> {
         match *self {}
     }
-}
-
-/// Whether a failed removal was refused because the display is still pinned.
-pub(crate) fn busy(_error: &anyhow::Error) -> bool {
-    false
 }
 
 /// Whether a failed removal means the display was already gone.
