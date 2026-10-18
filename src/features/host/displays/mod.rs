@@ -282,8 +282,19 @@ impl Session {
             "本次会话不允许添加虚拟屏"
         );
         self.run(move |state, lease| {
-            // 零输出时枚举会报错，而加虚拟屏正是为了这种机器，按空清单继续。
-            let screens = capture::screens().unwrap_or_default();
+            // 零输出时枚举会报错，而加虚拟屏正是为了这种机器，按空清单继续；但只
+            // 在拓扑里确实一块启用的输出都没有时才这样，别的错误（比如连不上 X）
+            // 照常报出来。
+            let screens = match capture::screens() {
+                Ok(screens) => screens,
+                Err(error) => {
+                    ensure!(
+                        Topology::query(true)?.metadata()?.iter().all(|t| !t.active),
+                        "{error:#}"
+                    );
+                    Vec::new()
+                }
+            };
             // 主控报的是它自己那块屏的尺寸；它没报就退回本机第一块屏的尺寸。
             let (width, height) = resolutions
                 .first()
