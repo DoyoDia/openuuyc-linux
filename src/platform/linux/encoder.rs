@@ -10,12 +10,19 @@ use anyhow::{Context, Result, bail, ensure};
 
 pub(crate) use crate::media::encoding::{Encoded, FrameTiming};
 
+/// 50 ms polls for the first picture: five seconds.
+const FIRST_PICTURE_TRIES: u32 = 100;
+
 pub(crate) fn probe(
     desktop: &mut Desktop,
     is_active: impl Fn() -> bool,
 ) -> Result<Vec<Capability>> {
+    // The portal's first picture can take seconds: the stream negotiates a
+    // format and buffers first, and KWin may wait for the screen to change.
+    // X11, NvFBC and wlr-screencopy answer at once, so the wait only matters
+    // when there is truly no picture; a cancelled connection stops it early.
     let mut frame = None;
-    for _ in 0..20 {
+    for _ in 0..FIRST_PICTURE_TRIES {
         if !is_active() {
             bail!("被控准备已取消");
         }
@@ -24,7 +31,11 @@ pub(crate) fn probe(
             break;
         }
     }
-    let frame = frame.context("尚未取得所选桌面画面")?;
+    let frame = match (frame, desktop.waiting()) {
+        (Some(frame), _) => frame,
+        (None, Some(stage)) => bail!("尚未取得所选桌面画面：{stage}"),
+        (None, None) => bail!("尚未取得所选桌面画面"),
+    };
     let mut candidates = Vec::new();
     if crate::media::encoding::nvenc::Api::load().is_ok() {
         for codec in [Codec::H264, Codec::H265, Codec::Av1] {

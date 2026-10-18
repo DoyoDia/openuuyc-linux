@@ -322,6 +322,11 @@ impl Grab {
     pub fn next(&mut self, timeout: Duration) -> Result<Option<Picture>> {
         self.stream.next(timeout)
     }
+
+    /// How far the stream got; see [`Stream::stage`].
+    pub fn stage(&self) -> String {
+        self.stream.stage()
+    }
 }
 
 #[cfg(test)]

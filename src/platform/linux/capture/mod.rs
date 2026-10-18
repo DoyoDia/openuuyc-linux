@@ -356,6 +356,16 @@ impl Desktop {
         self.backend.name()
     }
 
+    /// Why no picture has come yet, when the backend can tell: the portal
+    /// reports how far its PipeWire stream got. The others capture on request
+    /// and have nothing to wait for.
+    pub fn waiting(&self) -> Option<String> {
+        match &self.backend {
+            Backend::Portal(grab) => Some(grab.stage()),
+            _ => None,
+        }
+    }
+
     /// Neither backend captures HDR.
     pub fn hdr_available(&self) -> bool {
         false

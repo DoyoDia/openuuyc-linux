@@ -697,6 +697,11 @@ struct State {
     streaming: bool,
     error: Option<String>,
     buffers_sent: bool,
+    /// Buffers the compositor delivered, readable or not; with `unreadable`,
+    /// what [`Stream::stage`] tells a user whose first picture never came.
+    delivered: u64,
+    /// The data type of the latest buffer that held no readable picture.
+    unreadable: Option<u32>,
     /// Output geometry request from the capture worker: `(quality, maximum)`.
     /// The GPU converter derives the final size from the picture's own
     /// dimensions, exactly as the CPU path's `output()` does, so a controller
@@ -730,7 +735,12 @@ unsafe extern "C" fn on_state_changed(
     let callbacks = unsafe { &*data.cast::<Callbacks>() };
     let mut guard = lock(&callbacks.shared.state);
     match state {
-        STATE_STREAMING => guard.streaming = true,
+        STATE_STREAMING => {
+            if !guard.streaming {
+                tracing::info!("PipeWire screencast streaming");
+            }
+            guard.streaming = true;
+        }
         STATE_ERROR => {
             let text = if error.is_null() {
                 "未知错误".to_owned()
@@ -778,7 +788,7 @@ unsafe extern "C" fn on_param_changed(data: *mut c_void, id: u32, param: *const 
             params.len() as u32,
         )
     };
-    tracing::debug!(?format, "PipeWire screencast format negotiated");
+    tracing::info!(?format, "PipeWire screencast format negotiated");
 }
 
 unsafe extern "C" fn on_process(data: *mut c_void) {
@@ -805,13 +815,35 @@ unsafe extern "C" fn on_process(data: *mut c_void) {
     };
     let picture =
         format.and_then(|format| unsafe { read_picture((*newest).buffer, format, target) });
+    // What the buffer carried, for the stage report when no picture comes of it.
+    let kind = unsafe {
+        let buffer = (*newest).buffer;
+        (!buffer.is_null() && (*buffer).n_datas > 0 && !(*buffer).datas.is_null())
+            .then(|| (*(*buffer).datas).kind)
+    };
     unsafe { (api.stream_queue_buffer)(callbacks.stream, newest) };
-    if let Some(picture) = picture {
-        let mut state = lock(&callbacks.shared.state);
-        state.picture = Some(picture);
-        state.sequence += 1;
-        drop(state);
-        callbacks.shared.changed.notify_all();
+    let mut state = lock(&callbacks.shared.state);
+    state.delivered += 1;
+    if state.delivered == 1 {
+        tracing::info!(
+            data_type = kind,
+            readable = picture.is_some(),
+            "PipeWire first buffer delivered"
+        );
+    }
+    match picture {
+        Some(picture) => {
+            state.picture = Some(picture);
+            state.sequence += 1;
+            drop(state);
+            callbacks.shared.changed.notify_all();
+        }
+        None => {
+            if state.unreadable.is_none() {
+                tracing::warn!(data_type = kind, "PipeWire buffer held no readable picture");
+            }
+            state.unreadable = Some(kind.unwrap_or(u32::MAX));
+        }
     }
 }
 
@@ -1090,6 +1122,19 @@ impl Stream {
         state.target = target;
     }
 
+    /// How far the stream got, for a first picture that never arrived: the
+    /// stream not started, no format agreed, no buffer sent, or buffers that
+    /// held nothing readable. Each points at a different cause.
+    pub fn stage(&self) -> String {
+        let state = lock(&self.shared.state);
+        stage(
+            state.streaming,
+            state.format.map(|format| (format.width, format.height)),
+            state.delivered,
+            state.unreadable,
+        )
+    }
+
     /// The next picture newer than the last one returned, waiting up to
     /// `timeout`. `None` when nothing new arrived.
     pub fn next(&mut self, timeout: Duration) -> Result<Option<Picture>> {
@@ -1116,6 +1161,25 @@ impl Stream {
                 .unwrap_or_else(|e| e.into_inner())
                 .0;
         }
+    }
+}
+
+fn stage(
+    streaming: bool,
+    format: Option<(u32, u32)>,
+    delivered: u64,
+    unreadable: Option<u32>,
+) -> String {
+    match (streaming, format, delivered, unreadable) {
+        (false, None, _, _) => "门户的画面流没有开始传输".into(),
+        (true, None, _, _) => "门户的画面流已开始，但没有协商出画面格式".into(),
+        (_, Some((width, height)), 0, _) => format!(
+            "画面格式已协商（{width}×{height}），但合成器还没送来画面；有的桌面在画面静止时不发帧"
+        ),
+        (_, Some(_), delivered, Some(kind)) => {
+            format!("合成器送来了 {delivered} 个缓冲，但读不出画面（数据类型 {kind}）")
+        }
+        (_, Some(_), delivered, None) => format!("合成器送来了 {delivered} 个缓冲，画面还在处理"),
     }
 }
 
@@ -1147,6 +1211,14 @@ impl Drop for Stream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_stage_names_where_the_first_picture_stopped() {
+        assert_eq!(stage(false, None, 0, None), "门户的画面流没有开始传输");
+        assert!(stage(true, None, 0, None).contains("没有协商出画面格式"));
+        assert!(stage(true, Some((1920, 1080)), 0, None).contains("1920×1080"));
+        assert!(stage(true, Some((1920, 1080)), 3, Some(3)).contains("数据类型 3"));
+    }
 
     #[test]
     fn enum_format_parses_back() {
