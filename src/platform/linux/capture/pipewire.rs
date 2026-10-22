@@ -876,6 +876,48 @@ unsafe fn read_picture(
             }
         };
     }
+    // MemFd buffers are not mapped by PipeWire: `data.data` is null and the
+    // consumer has to mmap `data.fd` itself. KWin's ScreenCast portal delivers
+    // this type, so without this branch the stream looks alive but every frame
+    // is unreadable.
+    if data.kind == DATA_MEM_FD {
+        let maxsize = data.maxsize as usize;
+        if data.fd < 0 || maxsize == 0 || data.chunk.is_null() {
+            tracing::debug!(data_type = data.kind, "PipeWire MemFd buffer is not usable");
+            return None;
+        }
+        let mapped = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                maxsize,
+                libc::PROT_READ,
+                libc::MAP_SHARED,
+                data.fd as libc::c_int,
+                data.mapoffset as libc::off_t,
+            )
+        };
+        if mapped == libc::MAP_FAILED {
+            tracing::warn!(
+                error = %std::io::Error::last_os_error(),
+                "PipeWire MemFd 映射失败"
+            );
+            return None;
+        }
+        let result = {
+            let chunk = unsafe { &*data.chunk };
+            let stride = if chunk.stride > 0 {
+                chunk.stride as usize
+            } else {
+                width as usize * 4
+            };
+            let base = (chunk.offset % data.maxsize.max(1)) as usize;
+            let source = unsafe { std::slice::from_raw_parts(mapped.cast::<u8>(), maxsize) };
+            copy_picture_pixels(buffer, source, base, stride, format, width, height)
+        };
+        unsafe { libc::munmap(mapped, maxsize) };
+        return result;
+    }
+
     if data.data.is_null() || data.chunk.is_null() {
         // A DMA-BUF was not mapped for the CPU. Asking the portal for one does
         // not help: Hyprland's ScreenCast offers only MemFd, so this stays the
