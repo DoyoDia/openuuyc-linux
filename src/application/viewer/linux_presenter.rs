@@ -1082,6 +1082,18 @@ impl ConnectingWindowsRunner {
         };
         let window = slot.window.clone();
         let shell = &mut slot.shell;
+        if shell
+            .fullscreen_chrome
+            .intercept_touch(&shell.context, &event)
+        {
+            if let DetachedStage::Playing(player) = &mut slot.stage {
+                player.chrome_hovered = true;
+                player.update_input_gate(&shell.context, &window);
+                player.update_shortcuts(&shell.context, &window);
+            }
+            slot.next_repaint = Some(Instant::now());
+            return;
+        }
         let previous_events = shell.input.egui_input_mut().events.len();
         let response = shell.input.on_window_event(&window, &event);
         let consumed = response.consumed;
@@ -1292,6 +1304,18 @@ impl ApplicationHandler<UiEvent> for ConnectingWindowsRunner {
         let (Some(window), Some(shell)) = (self.window.clone(), self.shell.as_mut()) else {
             return;
         };
+        if shell
+            .fullscreen_chrome
+            .intercept_touch(&shell.context, &event)
+        {
+            if let Stage::Playing(player) = &mut self.stage {
+                player.chrome_hovered = true;
+                player.update_input_gate(&shell.context, &window);
+                player.update_shortcuts(&shell.context, &window);
+            }
+            self.schedule(Instant::now());
+            return;
+        }
         let previous_events = shell.input.egui_input_mut().events.len();
         let response = shell.input.on_window_event(&window, &event);
         let consumed = response.consumed;
@@ -2528,10 +2552,7 @@ impl Player {
         self.cursor_note("painted");
     }
 
-    /// The player commands, placed in the window caption between the title and
-    /// the window buttons. The Windows player has the same row, in the same
-    /// order, with the same icons — 鼠标、麦克风、1:1、批注、插件、画质，最右是
-    /// 窗口按钮。Linux 上还没实现的那几个画成禁用而不是不画：一眼就能看出缺什么。
+    /// Player commands share the caption with display tabs and window controls.
     pub(super) fn title_bar_controls(
         &mut self,
         ui: &mut egui::Ui,
@@ -2559,7 +2580,24 @@ impl Player {
         row.set_clip_rect(rect);
         row.spacing_mut().item_spacing.x = 4.0;
 
-        // 画质与串流设置。Windows 的 Quality 也在最右。
+        // Keep fullscreen reachable before optional actions consume caption width.
+        let fullscreen = window.fullscreen().is_some();
+        if caption_button(
+            &mut row,
+            if fullscreen {
+                ViewerCaptionIcon::ExitFullscreen
+            } else {
+                ViewerCaptionIcon::Fullscreen
+            },
+            fullscreen,
+            if fullscreen { "退出全屏" } else { "全屏" },
+        )
+        .clicked()
+        {
+            toggle_fullscreen(window);
+        }
+
+        // Stream quality and capture settings sit next to the fullscreen action.
         if caption_button(
             &mut row,
             ViewerCaptionIcon::Quality,
@@ -2707,12 +2745,7 @@ impl Player {
             self.set_control(!controlling);
         }
 
-        // 这里没有全屏按钮，和 Windows 一样：Linux 本来就有全屏的浮动操作栏
-        // （`fullscreen_chrome.show`），里面画的还是这根条子，窗口按钮在全屏时变成
-        // 「退出全屏」；进入全屏走快捷键。两边都不多一个入口。
-        //
-        // 这里也没有常驻的错误文字：屏标签要用这排按钮左边的全部宽度，错误一律走
-        // 可关闭的弹窗（见 `publish_error`）。
+        // Errors use dismissible notices so screen tabs keep the remaining width.
         let free = egui::Rect::from_min_max(
             rect.min,
             egui::pos2((row.min_rect().left() - 6.0).max(rect.min.x), rect.max.y),

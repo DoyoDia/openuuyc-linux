@@ -195,6 +195,8 @@ impl std::str::FromStr for TransportChoice {
 pub struct ConnectionMediaOptions {
     pub audio_only: bool,
     pub muted: bool,
+    #[cfg(target_os = "linux")]
+    pub fullscreen_floating_ball: bool,
     pub frame_rate: FrameRateChoice,
     pub codec: CodecPreference,
     pub decoder: super::selection::DecoderPreference,
@@ -206,6 +208,8 @@ impl Default for ConnectionMediaOptions {
         Self {
             audio_only: false,
             muted: false,
+            #[cfg(target_os = "linux")]
+            fullscreen_floating_ball: false,
             frame_rate: FrameRateChoice::Auto,
             codec: CodecPreference::Auto,
             decoder: Default::default(),
