@@ -1,7 +1,8 @@
-//! Typed keyboard/mouse events on UU CONTROL, independent of GUI frame cadence.
+//! Typed remote input on UU CONTROL, independent of GUI frame cadence.
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
+use crate::protocol::gamepad::{GamepadEvent, GamepadState, GamepadVibration, MAX_GAMEPADS};
 use crate::protocol::keyboard::KeyboardKey;
 use anyhow::{Result, bail};
 use std::time::{Duration, Instant};
@@ -91,6 +92,7 @@ pub(crate) enum InputEvent {
         lock: Option<u8>,
         interrupt: bool,
     },
+    Gamepad(GamepadEvent),
     Heartbeat,
 }
 
@@ -104,7 +106,11 @@ impl InputEvent {
     fn input_boundary(&self) -> bool {
         matches!(
             self,
-            Self::Button { .. } | Self::Key { .. } | Self::Wheel { .. } | Self::AssistButton { .. }
+            Self::Button { .. }
+                | Self::Key { .. }
+                | Self::Wheel { .. }
+                | Self::AssistButton { .. }
+                | Self::Gamepad(_)
         )
     }
     pub fn send_timeout(&self) -> std::time::Duration {
@@ -119,6 +125,14 @@ impl InputEvent {
                 .min(std::time::Duration::from_secs(1)),
             _ => std::time::Duration::from_secs(1),
         }
+    }
+    pub(crate) fn release(&self) -> bool {
+        matches!(
+            self,
+            Self::Button { down: false, .. }
+                | Self::Key { down: false, .. }
+                | Self::AssistButton { down: false, .. }
+        ) || matches!(self, Self::Gamepad(event) if event.release())
     }
     pub(crate) fn encode(&self) -> Vec<u8> {
         let value = match *self {
@@ -140,6 +154,7 @@ impl InputEvent {
                 lock,
                 interrupt,
             } => key.encode(down, lock, interrupt),
+            Self::Gamepad(event) => event.json(),
             Self::Heartbeat => serde_json::json!({"heartbeat":"kbd_heartbeat"}),
         };
         serde_json::to_vec(&value).expect("finite mouse events serialize")
@@ -158,6 +173,16 @@ pub(crate) struct CorrectionBasis {
 }
 
 type AssistOwner = (u64, Arc<dyn Fn() -> bool + Send + Sync>);
+
+// Only the Linux viewer samples controllers so far (SDL2); the Windows
+// controller has no collector yet, see README's 功能矩阵.
+#[cfg_attr(windows, allow(dead_code))]
+struct GamepadFeedback {
+    owner: u64,
+    epoch: u64,
+    // UU sends strength changes, not an effect duration or keepalive.
+    motors: (u16, u16),
+}
 
 #[derive(Default)]
 struct State {
@@ -187,6 +212,11 @@ struct State {
     remote_held: [bool; 5],
     keys: BTreeMap<u16, Option<u8>>,
     remote_keys: BTreeMap<KeyboardKey, Option<u8>>,
+    gamepads: BTreeMap<u8, GamepadState>,
+    // Marked before handing CONNECT to transport, just like remote key presses.
+    remote_gamepads: BTreeSet<u8>,
+    confirmed_gamepads: BTreeSet<u8>,
+    gamepad_feedback: BTreeMap<u8, GamepadFeedback>,
     // Transport acceptance of UP is not acknowledgement of host injection.
     // Keep keys retired at an ownership boundary for session reconciliation.
     release_checkpoint: BTreeSet<KeyboardKey>,
@@ -410,6 +440,151 @@ impl RemoteInput {
         }
     }
 
+    /// Full gamepad states share the keyboard/mouse owner and reliable epoch.
+    // Only the Linux viewer samples controllers so far (SDL2); the Windows
+    // controller has no collector yet, see README's 功能矩阵.
+    #[cfg_attr(windows, allow(dead_code))]
+    pub(crate) fn gamepad(&self, owner: u64, event: GamepadEvent) -> bool {
+        let index = event.index();
+        if index >= MAX_GAMEPADS {
+            return false;
+        }
+        let mut s = self.lock();
+        let accepted = match event {
+            GamepadEvent::Connect { .. } => {
+                if !Self::claim(&mut s, owner) {
+                    return false;
+                }
+                if s.gamepads.contains_key(&index) {
+                    return true;
+                }
+                let accepted = Self::push(&mut s, InputEvent::Gamepad(event));
+                if accepted {
+                    s.gamepads.insert(index, GamepadState::default());
+                }
+                accepted
+            }
+            GamepadEvent::Update { state, .. } => {
+                if s.owner != Some(owner)
+                    || !s.gamepads.contains_key(&index)
+                    || !Self::claim(&mut s, owner)
+                {
+                    return false;
+                }
+                if s.gamepads.get(&index) == Some(&state) {
+                    return true;
+                }
+                let accepted = if let Some(InputEvent::Gamepad(GamepadEvent::Update {
+                    index: previous,
+                    state: previous_state,
+                })) = s.queue.back_mut()
+                    && *previous == index
+                    && previous_state.coalesces_with(state)
+                    && (*previous_state == GamepadState::default())
+                        == (state == GamepadState::default())
+                {
+                    *previous_state = state;
+                    true
+                } else {
+                    Self::push(&mut s, InputEvent::Gamepad(event))
+                };
+                if accepted {
+                    s.gamepads.insert(index, state);
+                }
+                accepted
+            }
+            GamepadEvent::Disconnect { .. } => {
+                // A collector can drop after pause_owner already retired it.
+                // Never claim the current owner merely to repeat a disconnect.
+                if s.owner != Some(owner) {
+                    return s.owner.is_none() && !s.gamepads.contains_key(&index);
+                }
+                if s.gamepads.remove(&index).is_none() {
+                    return true;
+                }
+                s.confirmed_gamepads.remove(&index);
+                s.gamepad_feedback.remove(&index);
+                s.queue.retain(|queued| !matches!(queued, InputEvent::Gamepad(value) if value.index() == index));
+                if s.remote_gamepads.contains(&index) {
+                    Self::queue_gamepad_release(&mut s, index);
+                }
+                true
+            }
+        };
+        drop(s);
+        if accepted {
+            self.wake.notify_one();
+        }
+        accepted
+    }
+
+    /// Gamepad slots and vibration belong to one reliable epoch; a collector
+    /// that sees it change starts over instead of replaying the old slots.
+    pub(crate) fn gamepad_epoch(&self) -> u64 {
+        self.lock().epoch
+    }
+
+    pub(crate) fn receive_gamepad_vibration(&self, value: GamepadVibration) {
+        let epoch = self.gamepad_epoch();
+        self.receive_gamepad_vibration_in_epoch(epoch, value);
+    }
+
+    /// Async receivers capture the epoch before dispatching a feedback callback.
+    pub(crate) fn receive_gamepad_vibration_in_epoch(
+        &self,
+        epoch: u64,
+        value: GamepadVibration,
+    ) -> bool {
+        let mut s = self.lock();
+        let Some(owner) = s.owner else {
+            return false;
+        };
+        if value.index >= MAX_GAMEPADS
+            || s.epoch != epoch
+            || !s.ready
+            || s.stopping
+            || s.mode == MouseMode::View
+            || s.waiting_for_neutral
+            || !s.gamepads.contains_key(&value.index)
+            || !s.confirmed_gamepads.contains(&value.index)
+        {
+            return false;
+        }
+        s.gamepad_feedback.insert(
+            value.index,
+            GamepadFeedback {
+                owner,
+                epoch,
+                motors: value.motors(),
+            },
+        );
+        true
+    }
+
+    // Only the Linux viewer samples controllers so far (SDL2); the Windows
+    // controller has no collector yet, see README's 功能矩阵.
+    #[cfg_attr(windows, allow(dead_code))]
+    pub(crate) fn gamepad_vibration(&self, owner: u64, index: u8) -> Option<(u16, u16)> {
+        let s = self.lock();
+        if index >= MAX_GAMEPADS
+            || s.owner != Some(owner)
+            || !s.ready
+            || s.stopping
+            || s.mode == MouseMode::View
+            || s.waiting_for_neutral
+            || !s.gamepads.contains_key(&index)
+            || !s.confirmed_gamepads.contains(&index)
+        {
+            return None;
+        }
+        Some(
+            s.gamepad_feedback
+                .get(&index)
+                .filter(|feedback| feedback.owner == owner && feedback.epoch == s.epoch)
+                .map_or((0, 0), |feedback| feedback.motors),
+        )
+    }
+
     pub fn subscribe(
         &self,
         callback: impl Fn() + Send + Sync + 'static,
@@ -555,6 +730,30 @@ impl RemoteInput {
         s.in_flight = false;
         s.in_flight_motion = false;
         s.in_flight_assist = None;
+        s.gamepads.clear();
+        s.confirmed_gamepads.clear();
+        s.gamepad_feedback.clear();
+    }
+
+    fn queue_gamepad_release(s: &mut State, index: u8) {
+        // This finite release pass bypasses ordinary producer backpressure.
+        s.queue.push_back(InputEvent::Gamepad(GamepadEvent::Update {
+            index,
+            state: GamepadState::default(),
+        }));
+        s.queue
+            .push_back(InputEvent::Gamepad(GamepadEvent::Disconnect { index }));
+    }
+
+    fn release_gamepads_locked(s: &mut State) {
+        s.gamepads.clear();
+        s.confirmed_gamepads.clear();
+        s.gamepad_feedback.clear();
+        s.queue
+            .retain(|event| !matches!(event, InputEvent::Gamepad(_)));
+        for index in s.remote_gamepads.iter().copied().collect::<Vec<_>>() {
+            Self::queue_gamepad_release(s, index);
+        }
     }
 
     fn release_locked(s: &mut State) {
@@ -591,6 +790,7 @@ impl RemoteInput {
             }
         }
         s.held = [false; 5];
+        Self::release_gamepads_locked(s);
         s.owner = None;
     }
 
@@ -633,6 +833,9 @@ impl RemoteInput {
                     s.held[index] = false;
                 }
             }
+            // A file drag keeps only its submitted left-button hold, never
+            // a controller or vibration owned by the window losing focus.
+            Self::release_gamepads_locked(&mut s);
         } else {
             Self::release_locked(&mut s);
         }
@@ -941,6 +1144,10 @@ impl RemoteInput {
                         s.remote_keys.insert(key, lock);
                         s.release_checkpoint.remove(&key);
                     }
+                    if let InputEvent::Gamepad(GamepadEvent::Connect { index }) = event {
+                        s.remote_gamepads.insert(index);
+                        s.confirmed_gamepads.remove(&index);
+                    }
                     return InputWork::Event(QueuedInputEvent {
                         epoch: s.epoch,
                         event,
@@ -997,6 +1204,14 @@ impl RemoteInput {
                 s.owner == Some(*owner)
                     && (!down || (guard() && std::time::Instant::now() <= expires))
             }),
+            InputEvent::Gamepad(GamepadEvent::Connect { index }) => s.gamepads.contains_key(&index),
+            InputEvent::Gamepad(GamepadEvent::Update { index, state }) => {
+                s.gamepads.contains_key(&index)
+                    || (state == GamepadState::default() && s.remote_gamepads.contains(&index))
+            }
+            InputEvent::Gamepad(GamepadEvent::Disconnect { index }) => {
+                s.remote_gamepads.contains(&index)
+            }
             _ => true,
         }
     }
@@ -1034,6 +1249,19 @@ impl RemoteInput {
                     *y = ny;
                 }
                 (InputEvent::Heartbeat, Some(InputEvent::Heartbeat)) => {}
+                (
+                    InputEvent::Gamepad(GamepadEvent::Update { index, state }),
+                    Some(InputEvent::Gamepad(GamepadEvent::Update {
+                        index: next,
+                        state: latest,
+                    })),
+                ) if *index == *next
+                    && state.coalesces_with(*latest)
+                    && (*state == GamepadState::default())
+                        == (*latest == GamepadState::default()) =>
+                {
+                    *state = *latest;
+                }
                 _ => break,
             }
             s.queue.pop_front();
@@ -1261,6 +1489,19 @@ impl RemoteInput {
         }
         match result {
             Ok(()) => {
+                if let InputEvent::Gamepad(event) = event.event {
+                    match event {
+                        GamepadEvent::Connect { index } => {
+                            s.confirmed_gamepads.insert(index);
+                        }
+                        GamepadEvent::Disconnect { index } => {
+                            s.remote_gamepads.remove(&index);
+                            s.confirmed_gamepads.remove(&index);
+                            s.gamepad_feedback.remove(&index);
+                        }
+                        GamepadEvent::Update { .. } => {}
+                    }
+                }
                 if let InputEvent::Key {
                     key, down: false, ..
                 } = event.event
@@ -1447,5 +1688,402 @@ impl DragHoldInner {
 impl Drop for DragHoldInner {
     fn drop(&mut self) {
         self.cancel();
+    }
+}
+
+#[cfg(test)]
+mod gamepad_tests {
+    use super::*;
+
+    fn controlling() -> RemoteInput {
+        let input = RemoteInput::default();
+        input.set_ready(true);
+        input.enable(MouseMode::Remote, false).unwrap();
+        input.confirm_neutral(input.activation_generation());
+        input
+    }
+
+    async fn event(input: &RemoteInput) -> QueuedInputEvent {
+        match tokio::time::timeout(Duration::from_secs(1), input.next())
+            .await
+            .unwrap()
+        {
+            InputWork::Event(event) => event,
+            InputWork::Recovery(_) => panic!("unexpected recovery"),
+        }
+    }
+
+    async fn connected(input: &RemoteInput, owner: u64, index: u8) {
+        assert!(input.gamepad(owner, GamepadEvent::Connect { index }));
+        let next = event(input).await;
+        assert!(
+            matches!(next.event, InputEvent::Gamepad(GamepadEvent::Connect { index: value }) if value == index)
+        );
+        input.complete(&next, Ok(()));
+    }
+
+    async fn release_pair(input: &RemoteInput, index: u8) {
+        let neutral = event(input).await;
+        assert!(
+            matches!(neutral.event, InputEvent::Gamepad(GamepadEvent::Update { index: value, state }) if value == index && state == GamepadState::default())
+        );
+        assert!(neutral.event.release());
+        input.complete(&neutral, Ok(()));
+        let disconnect = event(input).await;
+        assert!(
+            matches!(disconnect.event, InputEvent::Gamepad(GamepadEvent::Disconnect { index: value }) if value == index)
+        );
+        assert!(disconnect.event.release());
+        input.complete(&disconnect, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn connection_precedes_state_and_updates_coalesce_before_submission() {
+        let input = controlling();
+        let pressed = GamepadState {
+            buttons: 0x1000,
+            left_thumb_x: 4000,
+            ..Default::default()
+        };
+        assert!(!input.gamepad(
+            1,
+            GamepadEvent::Update {
+                index: 0,
+                state: pressed
+            }
+        ));
+        assert!(!input.gamepad(
+            1,
+            GamepadEvent::Connect {
+                index: MAX_GAMEPADS
+            }
+        ));
+        assert!(input.gamepad(1, GamepadEvent::Connect { index: 0 }));
+        for axis in 4000..4500 {
+            let state = GamepadState {
+                left_thumb_x: axis,
+                ..pressed
+            };
+            assert!(input.gamepad(1, GamepadEvent::Update { index: 0, state }));
+            assert!(input.gamepad(1, GamepadEvent::Update { index: 0, state }));
+        }
+        assert_eq!(input.lock().queue.len(), 2);
+        let connect = event(&input).await;
+        assert!(input.lock().remote_gamepads.contains(&0));
+        assert!(!input.lock().confirmed_gamepads.contains(&0));
+        input.complete(&connect, Ok(()));
+        let update = event(&input).await;
+        assert!(
+            matches!(update.event, InputEvent::Gamepad(GamepadEvent::Update { state, .. }) if state.left_thumb_x == 4499)
+        );
+        input.complete(&update, Ok(()));
+        assert!(input.lock().queue.is_empty());
+    }
+
+    #[tokio::test]
+    async fn backpressure_refresh_does_not_cross_a_release_boundary_or_slot() {
+        let input = controlling();
+        connected(&input, 1, 0).await;
+        let state = |axis| GamepadState {
+            left_thumb_x: axis,
+            ..Default::default()
+        };
+        assert!(input.gamepad(
+            1,
+            GamepadEvent::Update {
+                index: 0,
+                state: state(1)
+            }
+        ));
+        let mut pending = event(&input).await;
+        assert!(input.gamepad(
+            1,
+            GamepadEvent::Update {
+                index: 0,
+                state: state(2)
+            }
+        ));
+        assert!(input.refresh_pending(&mut pending));
+        assert!(
+            matches!(pending.event, InputEvent::Gamepad(GamepadEvent::Update { state, .. }) if state.left_thumb_x == 2)
+        );
+        assert!(input.gamepad(
+            1,
+            GamepadEvent::Update {
+                index: 0,
+                state: GamepadState::default()
+            }
+        ));
+        assert!(input.refresh_pending(&mut pending));
+        assert!(!pending.event.release());
+        input.complete(&pending, Ok(()));
+        let neutral = event(&input).await;
+        assert!(neutral.event.release());
+        input.complete(&neutral, Ok(()));
+
+        let held = GamepadState {
+            buttons: 0x1000,
+            ..Default::default()
+        };
+        assert!(input.gamepad(
+            1,
+            GamepadEvent::Update {
+                index: 0,
+                state: held
+            }
+        ));
+        let mut pending = event(&input).await;
+        let moved = GamepadState {
+            left_thumb_x: 1000,
+            ..held
+        };
+        assert!(input.gamepad(
+            1,
+            GamepadEvent::Update {
+                index: 0,
+                state: moved
+            }
+        ));
+        assert!(input.refresh_pending(&mut pending));
+        assert!(
+            matches!(pending.event, InputEvent::Gamepad(GamepadEvent::Update { state, .. }) if state == moved)
+        );
+        let other_button = GamepadState {
+            buttons: 0x2000,
+            ..moved
+        };
+        assert!(input.gamepad(
+            1,
+            GamepadEvent::Update {
+                index: 0,
+                state: other_button
+            }
+        ));
+        assert!(input.gamepad(
+            1,
+            GamepadEvent::Update {
+                index: 0,
+                state: GamepadState::default()
+            }
+        ));
+        assert!(input.refresh_pending(&mut pending));
+        assert!(
+            matches!(pending.event, InputEvent::Gamepad(GamepadEvent::Update { state, .. }) if state == moved)
+        );
+        input.complete(&pending, Ok(()));
+        let switched = event(&input).await;
+        assert!(
+            matches!(switched.event, InputEvent::Gamepad(GamepadEvent::Update { state, .. }) if state == other_button)
+        );
+        input.complete(&switched, Ok(()));
+        let released = event(&input).await;
+        assert!(released.event.release());
+        input.complete(&released, Ok(()));
+
+        connected(&input, 1, 1).await;
+        assert!(input.gamepad(
+            1,
+            GamepadEvent::Update {
+                index: 0,
+                state: state(3)
+            }
+        ));
+        let mut pending = event(&input).await;
+        assert!(input.gamepad(
+            1,
+            GamepadEvent::Update {
+                index: 1,
+                state: state(4)
+            }
+        ));
+        assert!(input.gamepad(
+            1,
+            GamepadEvent::Update {
+                index: 0,
+                state: state(5)
+            }
+        ));
+        assert!(input.refresh_pending(&mut pending));
+        assert!(
+            matches!(pending.event, InputEvent::Gamepad(GamepadEvent::Update { index: 0, state }) if state.left_thumb_x == 3)
+        );
+        input.complete(&pending, Ok(()));
+        for (index, axis) in [(1, 4), (0, 5)] {
+            let next = event(&input).await;
+            assert!(
+                matches!(next.event, InputEvent::Gamepad(GamepadEvent::Update { index: value, state }) if value == index && state.left_thumb_x == axis)
+            );
+            input.complete(&next, Ok(()));
+        }
+    }
+
+    #[tokio::test]
+    async fn short_button_presses_and_trigger_edges_remain_ordered() {
+        let input = controlling();
+        connected(&input, 1, 0).await;
+        let a = GamepadState {
+            buttons: 0x1000,
+            ..Default::default()
+        };
+        let b = GamepadState {
+            buttons: 0x2000,
+            ..Default::default()
+        };
+        let b_trigger = GamepadState {
+            left_trigger: 20,
+            ..b
+        };
+        for state in [
+            a,
+            GamepadState::default(),
+            b,
+            GamepadState {
+                left_trigger: 10,
+                ..b
+            },
+            b_trigger,
+            b,
+        ] {
+            assert!(input.gamepad(1, GamepadEvent::Update { index: 0, state }));
+        }
+        for expected in [a, GamepadState::default(), b, b_trigger, b] {
+            let next = event(&input).await;
+            assert!(
+                matches!(next.event, InputEvent::Gamepad(GamepadEvent::Update { state, .. }) if state == expected)
+            );
+            input.complete(&next, Ok(()));
+        }
+        assert!(input.lock().queue.is_empty());
+    }
+
+    #[tokio::test]
+    async fn focus_loss_cancels_pending_connect_but_releases_in_flight_connect() {
+        let input = controlling();
+        assert!(input.gamepad(1, GamepadEvent::Connect { index: 0 }));
+        input.pause_owner(1);
+        assert!(input.lock().queue.is_empty());
+        assert!(input.gamepad(1, GamepadEvent::Disconnect { index: 0 }));
+        assert!(input.lock().owner.is_none());
+        assert!(input.gamepad(1, GamepadEvent::Connect { index: 0 }));
+        let in_flight = event(&input).await;
+        input.pause_owner(1);
+        assert!(!input.is_current(&in_flight));
+        input.complete(&in_flight, Ok(()));
+        assert!(input.lock().confirmed_gamepads.is_empty());
+        release_pair(&input, 0).await;
+        assert!(input.lock().remote_gamepads.is_empty());
+        assert!(input.lock().queue.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reconnection_keeps_an_unfinished_disconnect_as_a_release_obligation() {
+        let input = controlling();
+        connected(&input, 1, 0).await;
+        assert!(input.gamepad(1, GamepadEvent::Disconnect { index: 0 }));
+        let neutral = event(&input).await;
+        input.complete(&neutral, Ok(()));
+        let in_flight_disconnect = event(&input).await;
+        input.set_ready(false);
+        input.set_ready(true);
+        input.complete(&in_flight_disconnect, Ok(()));
+        assert!(input.lock().remote_gamepads.contains(&0));
+        release_pair(&input, 0).await;
+        assert!(input.lock().remote_gamepads.is_empty());
+    }
+
+    #[tokio::test]
+    async fn transport_failure_never_replays_the_previous_axis_state() {
+        let input = controlling();
+        connected(&input, 1, 0).await;
+        let pressed = GamepadState {
+            buttons: 0x1000,
+            right_thumb_y: 20000,
+            ..Default::default()
+        };
+        assert!(input.gamepad(
+            1,
+            GamepadEvent::Update {
+                index: 0,
+                state: pressed
+            }
+        ));
+        let failed = event(&input).await;
+        let recovery = input.pause_transport(&failed).unwrap();
+        assert_eq!(recovery.releases.len(), 2);
+        assert!(recovery.releases.iter().all(InputEvent::release));
+        assert!(
+            matches!(recovery.releases[0], InputEvent::Gamepad(GamepadEvent::Update { state, .. }) if state == GamepadState::default())
+        );
+        assert!(!input.gamepad(
+            1,
+            GamepadEvent::Update {
+                index: 0,
+                state: pressed
+            }
+        ));
+        input.finish_transport_recovery(recovery.epoch, Ok(()));
+        assert!(input.lock().remote_gamepads.is_empty());
+        assert!(input.lock().gamepads.is_empty());
+        assert!(input.lock().queue.is_empty());
+    }
+
+    #[tokio::test]
+    async fn vibration_holds_until_replaced_and_old_owner_or_epoch_cannot_restore_it() {
+        let input = controlling();
+        connected(&input, 1, 0).await;
+        let old_epoch = input.gamepad_epoch();
+        let vibration = GamepadVibration {
+            index: 0,
+            left_motor: 255,
+            right_motor: 128,
+        };
+        assert!(input.receive_gamepad_vibration_in_epoch(old_epoch, vibration));
+        assert_eq!(input.gamepad_vibration(1, 0), Some((65535, 32896)));
+        // The wire has no duration: a single nonzero message can describe a
+        // sustained effect longer than the old one-second local timeout.
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        assert_eq!(input.gamepad_vibration(1, 0), Some((65535, 32896)));
+        input.receive_gamepad_vibration(GamepadVibration {
+            index: 0,
+            left_motor: 0,
+            right_motor: 0,
+        });
+        assert_eq!(input.gamepad_vibration(1, 0), Some((0, 0)));
+        assert_eq!(input.gamepad_vibration(2, 0), None);
+        input.receive_gamepad_vibration(vibration);
+        assert_eq!(input.gamepad_vibration(1, 0), Some((65535, 32896)));
+        input.pause_owner(1);
+        assert_eq!(input.gamepad_vibration(1, 0), None);
+        release_pair(&input, 0).await;
+        connected(&input, 2, 0).await;
+        assert!(!input.receive_gamepad_vibration_in_epoch(old_epoch, vibration));
+        assert_eq!(input.gamepad_vibration(2, 0), Some((0, 0)));
+        assert!(!input.gamepad(1, GamepadEvent::Disconnect { index: 0 }));
+        assert!(input.lock().gamepads.contains_key(&0));
+        assert!(!input.receive_gamepad_vibration_in_epoch(
+            input.gamepad_epoch(),
+            GamepadVibration {
+                index: MAX_GAMEPADS,
+                ..vibration
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn file_handoff_preserves_only_the_mouse_hold_not_the_controller() {
+        let input = controlling();
+        input.button(1, 1, true);
+        let press = event(&input).await;
+        input.complete(&press, Ok(()));
+        let hold = input.hold_drag(1).unwrap();
+        connected(&input, 1, 0).await;
+        input.pause_owner(1);
+        assert!(hold.current());
+        assert!(input.owner_holds_left(1));
+        assert!(input.lock().gamepads.is_empty());
+        release_pair(&input, 0).await;
+        assert!(hold.current());
+        hold.cancel();
+        assert!(!hold.current());
     }
 }

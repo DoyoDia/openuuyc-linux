@@ -992,6 +992,7 @@ impl ConnectingWindowsRunner {
                 // 独立窗口只守着自己那块屏，新屏归主窗口。
                 redraw |= player.refresh_catalog(&slot.window, &[]);
                 let frame = player.poll();
+                player.poll_gamepad(&slot.window);
                 redraw |= player.error.is_some();
                 if frame || redraw {
                     slot.next_repaint = Some(Instant::now());
@@ -1081,6 +1082,18 @@ impl ConnectingWindowsRunner {
         };
         let window = slot.window.clone();
         let shell = &mut slot.shell;
+        if shell
+            .fullscreen_chrome
+            .intercept_touch(&shell.context, &event)
+        {
+            if let DetachedStage::Playing(player) = &mut slot.stage {
+                player.chrome_hovered = true;
+                player.update_input_gate(&shell.context, &window);
+                player.update_shortcuts(&shell.context, &window);
+            }
+            slot.next_repaint = Some(Instant::now());
+            return;
+        }
         let previous_events = shell.input.egui_input_mut().events.len();
         let response = shell.input.on_window_event(&window, &event);
         let consumed = response.consumed;
@@ -1291,6 +1304,18 @@ impl ApplicationHandler<UiEvent> for ConnectingWindowsRunner {
         let (Some(window), Some(shell)) = (self.window.clone(), self.shell.as_mut()) else {
             return;
         };
+        if shell
+            .fullscreen_chrome
+            .intercept_touch(&shell.context, &event)
+        {
+            if let Stage::Playing(player) = &mut self.stage {
+                player.chrome_hovered = true;
+                player.update_input_gate(&shell.context, &window);
+                player.update_shortcuts(&shell.context, &window);
+            }
+            self.schedule(Instant::now());
+            return;
+        }
         let previous_events = shell.input.egui_input_mut().events.len();
         let response = shell.input.on_window_event(&window, &event);
         let consumed = response.consumed;
@@ -1438,6 +1463,9 @@ impl ApplicationHandler<UiEvent> for ConnectingWindowsRunner {
             // leave an arriving frame waiting for the pass in progress.
             player.park_stranded();
             let frame = player.poll();
+            if let Some(window) = self.window.as_ref() {
+                player.poll_gamepad(window);
+            }
             // 解码器出错的弹窗也要画出来，哪怕之后再没有新帧。
             redraw |= player.error.is_some();
             if frame {
@@ -1484,11 +1512,13 @@ impl ApplicationHandler<UiEvent> for ConnectingWindowsRunner {
         let mut wake = self.next_repaint;
         if let Stage::Playing(player) = &self.stage {
             wake = earliest(wake, Some(player.next_refresh));
+            wake = earliest(wake, player.gamepad.deadline());
         }
         for slot in &self.detached {
             wake = earliest(wake, slot.next_repaint);
             if let DetachedStage::Playing(player) = &slot.stage {
                 wake = earliest(wake, Some(player.next_refresh));
+                wake = earliest(wake, player.gamepad.deadline());
             }
         }
         event_loop.set_control_flow(wake.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
@@ -1614,6 +1644,7 @@ struct Player {
     wake: Option<FrameWakeBridge>,
     /// Identifies this window to `RemoteInput`, which arbitrates between windows.
     owner: u64,
+    gamepad: super::linux_gamepad::GamepadCapture,
     stream_control_ui: StreamControlUi,
     performance_mode: PerformancePanelMode,
     intercept_shortcuts: bool,
@@ -1716,6 +1747,10 @@ impl Player {
         };
         let drag =
             super::linux_drag::WindowDrag::new(owner, &session.stream_control, linked.clone());
+        let gamepad = super::linux_gamepad::GamepadCapture::new(
+            session.stream_control.mouse().clone(),
+            owner,
+        );
         Ok(Self {
             shortcuts: super::linux_shortcuts::Shortcuts::new(window),
             drag,
@@ -1735,6 +1770,7 @@ impl Player {
             window_id,
             wake: Some(wake),
             owner,
+            gamepad,
             stream_control_ui: StreamControlUi::default(),
             performance_mode: PerformancePanelMode::Compact,
             intercept_shortcuts: true,
@@ -1825,6 +1861,20 @@ impl Player {
 
     fn input(&self) -> &crate::features::remote_input::RemoteInput {
         self.session.stream_control.mouse()
+    }
+
+    fn poll_gamepad(&mut self, window: &Window) {
+        let active = self.focused
+            && window.is_minimized() != Some(true)
+            && !self.frame_paused
+            && self.video_size.is_some()
+            && !self.local_input_blocked
+            && !self.stream_control_ui.open
+            && !self.is_pending()
+            && !self.control().drag_drop().interactive()
+            && self.input().mode() != MouseMode::View
+            && !self.input().waiting_for_neutral();
+        self.gamepad.tick(active);
     }
 
     /// 用户点了某块屏的 tab。点的是正在显示的那块，就等于取消这次切换（open 任务
@@ -2505,7 +2555,8 @@ impl Player {
     /// The player commands, placed in the window caption between the title and
     /// the window buttons. The Windows player has the same row, in the same
     /// order, with the same icons — 鼠标、麦克风、1:1、批注、插件、画质，最右是
-    /// 窗口按钮。Linux 上还没实现的那几个画成禁用而不是不画：一眼就能看出缺什么。
+    /// 全屏，再往右是窗口按钮。Linux 上还没实现的那几个画成禁用而不是不画：
+    /// 一眼就能看出缺什么。
     pub(super) fn title_bar_controls(
         &mut self,
         ui: &mut egui::Ui,
@@ -2533,7 +2584,24 @@ impl Player {
         row.set_clip_rect(rect);
         row.spacing_mut().item_spacing.x = 4.0;
 
-        // 画质与串流设置。Windows 的 Quality 也在最右。
+        // 全屏放在最右：没有键盘（触屏、游戏模式）也能进出全屏。Windows 同位置。
+        let fullscreen = window.fullscreen().is_some();
+        if caption_button(
+            &mut row,
+            if fullscreen {
+                ViewerCaptionIcon::ExitFullscreen
+            } else {
+                ViewerCaptionIcon::Fullscreen
+            },
+            fullscreen,
+            if fullscreen { "退出全屏" } else { "全屏" },
+        )
+        .clicked()
+        {
+            toggle_fullscreen(window);
+        }
+
+        // 画质与串流设置，紧挨着全屏。Windows 的 Quality 也在这里。
         if caption_button(
             &mut row,
             ViewerCaptionIcon::Quality,
@@ -2681,11 +2749,7 @@ impl Player {
             self.set_control(!controlling);
         }
 
-        // 这里没有全屏按钮，和 Windows 一样：Linux 本来就有全屏的浮动操作栏
-        // （`fullscreen_chrome.show`），里面画的还是这根条子，窗口按钮在全屏时变成
-        // 「退出全屏」；进入全屏走快捷键。两边都不多一个入口。
-        //
-        // 这里也没有常驻的错误文字：屏标签要用这排按钮左边的全部宽度，错误一律走
+        // 这里没有常驻的错误文字：屏标签要用这排按钮左边的全部宽度，错误一律走
         // 可关闭的弹窗（见 `publish_error`）。
         let free = egui::Rect::from_min_max(
             rect.min,
@@ -2943,6 +3007,7 @@ impl Player {
             self.input().fail(error.to_string());
         }
         if !enabled {
+            self.gamepad.pause();
             self.release_keys();
         }
     }
@@ -3081,6 +3146,7 @@ impl Player {
     fn update_input_gate(&mut self, context: &egui::Context, window: &Arc<Window>) {
         let blocked = self.local_ui_owns_input(context);
         if blocked && !self.local_input_blocked {
+            self.gamepad.pause();
             self.release_keys();
             self.input().pause_owner(self.owner);
             self.release_pointer(window);
@@ -3091,6 +3157,9 @@ impl Player {
 
     fn on_focus_changed(&mut self, window: &Arc<Window>, focused: bool) {
         self.focused = focused;
+        if !focused {
+            self.gamepad.pause();
+        }
         if !focused && self.control().drag_drop().handoff_pending() {
             // A drag being handed out of the window keeps its button state;
             // the handoff releases remote input itself.
@@ -3107,6 +3176,7 @@ impl Player {
     /// Hand back everything held for the remote; control resumes on the next
     /// click into the video.
     fn release_input(&mut self, window: &Arc<Window>) {
+        self.gamepad.pause();
         self.release_pointer(window);
         self.release_keys();
         self.physical_keys.clear();
@@ -3703,6 +3773,7 @@ impl Player {
 
 impl Drop for Player {
     fn drop(&mut self) {
+        self.gamepad.pause();
         if let Some(linked) = &self.linked {
             linked.unwatch(self.owner);
         }

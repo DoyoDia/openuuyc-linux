@@ -75,6 +75,8 @@ pub fn handoff() {
 // no cached runtime to enter, no resource origin and no launcher to signal.
 #[cfg(not(windows))]
 pub fn initialize() -> Result<()> {
+    #[cfg(target_os = "linux")]
+    crate::platform::linux::gamescope::initialize_environment();
     Ok(())
 }
 #[cfg(not(windows))]

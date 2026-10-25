@@ -14,6 +14,8 @@ pub(crate) mod dmabuf;
 pub(crate) mod drag_drop;
 pub(crate) mod encoder;
 pub(crate) mod file_locations;
+pub(crate) mod gamepad;
+pub(crate) mod gamescope;
 mod gpu_convert;
 pub(crate) mod graphics;
 pub(crate) mod host_service;

@@ -1254,6 +1254,14 @@ impl DeviceCenterApp {
             self.host_settings(ui);
             self.notification_settings(ui);
             section(ui, "本机作为主控");
+            form_row(
+                ui,
+                "全屏悬浮球",
+                "触屏全屏时点右侧圆球展开操作栏",
+                |ui| {
+                    crate::ui::controls::switch(ui, &mut self.media.fullscreen_floating_ball);
+                },
+            );
             form_row(ui, "串流帧率", "以远端实际刷新率为准", |ui| {
                 egui::ComboBox::from_id_salt("center-fps")
                     .width(238.0)
@@ -1392,7 +1400,7 @@ impl DeviceCenterApp {
         if self.media != original_media {
             if let Err(error) = crate::media::preferences::save(self.media) {
                 self.media = original_media;
-                self.status = StatusMessage::error(format!("保存编解码设置失败：{error:#}"));
+                self.status = StatusMessage::error(format!("保存连接设置失败：{error:#}"));
             }
         }
     }
