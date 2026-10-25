@@ -174,6 +174,9 @@ pub(crate) struct CorrectionBasis {
 
 type AssistOwner = (u64, Arc<dyn Fn() -> bool + Send + Sync>);
 
+// Only the Linux viewer samples controllers so far (SDL2); the Windows
+// controller has no collector yet, see README's 功能矩阵.
+#[cfg_attr(windows, allow(dead_code))]
 struct GamepadFeedback {
     owner: u64,
     epoch: u64,
@@ -438,6 +441,9 @@ impl RemoteInput {
     }
 
     /// Full gamepad states share the keyboard/mouse owner and reliable epoch.
+    // Only the Linux viewer samples controllers so far (SDL2); the Windows
+    // controller has no collector yet, see README's 功能矩阵.
+    #[cfg_attr(windows, allow(dead_code))]
     pub(crate) fn gamepad(&self, owner: u64, event: GamepadEvent) -> bool {
         let index = event.index();
         if index >= MAX_GAMEPADS {
@@ -512,16 +518,14 @@ impl RemoteInput {
         accepted
     }
 
-    pub(crate) fn gamepad_feedback_epoch(&self) -> u64 {
-        self.lock().epoch
-    }
-
-    pub(crate) fn gamepad_generation(&self) -> u64 {
+    /// Gamepad slots and vibration belong to one reliable epoch; a collector
+    /// that sees it change starts over instead of replaying the old slots.
+    pub(crate) fn gamepad_epoch(&self) -> u64 {
         self.lock().epoch
     }
 
     pub(crate) fn receive_gamepad_vibration(&self, value: GamepadVibration) {
-        let epoch = self.gamepad_feedback_epoch();
+        let epoch = self.gamepad_epoch();
         self.receive_gamepad_vibration_in_epoch(epoch, value);
     }
 
@@ -557,6 +561,9 @@ impl RemoteInput {
         true
     }
 
+    // Only the Linux viewer samples controllers so far (SDL2); the Windows
+    // controller has no collector yet, see README's 功能矩阵.
+    #[cfg_attr(windows, allow(dead_code))]
     pub(crate) fn gamepad_vibration(&self, owner: u64, index: u8) -> Option<(u16, u16)> {
         let s = self.lock();
         if index >= MAX_GAMEPADS
@@ -2024,7 +2031,7 @@ mod gamepad_tests {
     async fn vibration_holds_until_replaced_and_old_owner_or_epoch_cannot_restore_it() {
         let input = controlling();
         connected(&input, 1, 0).await;
-        let old_epoch = input.gamepad_feedback_epoch();
+        let old_epoch = input.gamepad_epoch();
         let vibration = GamepadVibration {
             index: 0,
             left_motor: 255,
@@ -2054,7 +2061,7 @@ mod gamepad_tests {
         assert!(!input.gamepad(1, GamepadEvent::Disconnect { index: 0 }));
         assert!(input.lock().gamepads.contains_key(&0));
         assert!(!input.receive_gamepad_vibration_in_epoch(
-            input.gamepad_feedback_epoch(),
+            input.gamepad_epoch(),
             GamepadVibration {
                 index: MAX_GAMEPADS,
                 ..vibration

@@ -24,6 +24,9 @@ impl GamepadState {
     }
 
     /// Activation waits for released controls, without treating stick noise as a hold.
+    // Only the Linux viewer samples controllers so far (SDL2); the Windows
+    // controller has no collector yet, see README's 功能矩阵.
+    #[cfg_attr(windows, allow(dead_code))]
     pub(crate) fn at_rest(self) -> bool {
         self.buttons == 0
             && self.left_trigger <= 4
@@ -39,6 +42,9 @@ impl GamepadState {
     }
 }
 
+// Only the Linux viewer samples controllers so far (SDL2); the Windows
+// controller has no collector yet, see README's 功能矩阵.
+#[cfg_attr(windows, allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GamepadEvent {
     Connect { index: u8 },
@@ -47,6 +53,7 @@ pub(crate) enum GamepadEvent {
 }
 
 impl GamepadEvent {
+    #[cfg_attr(windows, allow(dead_code))]
     pub(crate) fn index(self) -> u8 {
         match self {
             Self::Connect { index } | Self::Update { index, .. } | Self::Disconnect { index } => {

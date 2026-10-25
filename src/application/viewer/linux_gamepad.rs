@@ -53,7 +53,7 @@ pub(super) struct GamepadCapture {
 
 impl GamepadCapture {
     pub(super) fn new(input: RemoteInput, owner: u64) -> Self {
-        let generation = input.gamepad_generation();
+        let generation = input.gamepad_epoch();
         Self {
             input,
             owner,
@@ -77,7 +77,7 @@ impl GamepadCapture {
             return;
         }
         let now = Instant::now();
-        let generation = self.input.gamepad_generation();
+        let generation = self.input.gamepad_epoch();
         if generation != self.generation {
             // RemoteInput already retired the old epoch. Do not enqueue its
             // disconnect into a new owner's epoch; only release local hardware.
@@ -137,7 +137,7 @@ impl GamepadCapture {
                 ) {
                     continue;
                 }
-                self.generation = self.input.gamepad_generation();
+                self.generation = self.input.gamepad_epoch();
                 if !self.input.gamepad(
                     self.owner,
                     GamepadEvent::Update {
@@ -171,12 +171,12 @@ impl GamepadCapture {
                 self.release_slots();
                 self.reset_local();
                 self.next = Some(now + DISCOVER);
-                self.generation = self.input.gamepad_generation();
+                self.generation = self.input.gamepad_epoch();
                 return;
             }
             self.feedback(index, now);
         }
-        self.generation = self.input.gamepad_generation();
+        self.generation = self.input.gamepad_epoch();
     }
 
     fn feedback(&mut self, index: usize, now: Instant) {
@@ -251,7 +251,7 @@ impl GamepadCapture {
     pub(super) fn pause(&mut self) {
         self.release_slots();
         self.reset_local();
-        self.generation = self.input.gamepad_generation();
+        self.generation = self.input.gamepad_epoch();
     }
 }
 
