@@ -1,0 +1,315 @@
+//! Gamescope startup and host credential-service integration.
+//!
+//! This runs before graphics or account records are opened. A portable data
+//! directory must not hide the compositor socket, and the shared system wallet
+//! must remain a host service rather than a Steam-tracked application child.
+
+use anyhow::{Context, Result, bail, ensure};
+use futures_util::{FutureExt, StreamExt};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+use winit::dpi::PhysicalPosition;
+use winit::window::Window;
+use zbus::zvariant::{OwnedObjectPath, OwnedValue};
+
+const SECRET_SERVICE: &str = "org.freedesktop.secrets";
+const SECRET_PATH: &str = "/org/freedesktop/secrets";
+
+/// Absolute names keep working after a launcher redirects XDG_RUNTIME_DIR.
+fn socket_path(runtime: &Path, name: &std::ffi::OsStr) -> PathBuf {
+    runtime.join(name)
+}
+
+fn graphical_environment(read: impl Fn(&str) -> Option<String>) -> HashMap<&'static str, String> {
+    [
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "XAUTHORITY",
+        "XDG_SESSION_TYPE",
+        "GAMESCOPE_WAYLAND_DISPLAY",
+    ]
+    .into_iter()
+    .map(|key| (key, read(key).unwrap_or_default()))
+    .collect()
+}
+
+/// Called by bootstrap before argument parsing or application worker creation.
+pub(crate) fn initialize_environment() {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() })));
+    for key in ["WAYLAND_DISPLAY", "GAMESCOPE_WAYLAND_DISPLAY"] {
+        if let Some(name) = std::env::var_os(key).filter(|name| !name.is_empty()) {
+            let mut path = socket_path(&runtime, &name);
+            if !Path::new(&name).is_absolute() && !path.exists() {
+                // Also accept a launcher that already moved its own runtime
+                // directory without first making the display names absolute.
+                let host = PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() }));
+                let candidate = socket_path(&host, &name);
+                if candidate.exists() {
+                    path = candidate;
+                }
+            }
+            // SAFETY: native main invokes bootstrap before spawning threads.
+            unsafe { std::env::set_var(key, path) };
+        }
+    }
+    if active() && std::env::var_os("WINIT_X11_SCALE_FACTOR").is_none() {
+        // Gamescope's synthetic RandR physical dimensions are not the handheld's
+        // DPI. They otherwise scale windows and input by different factors.
+        // SAFETY: as above, no application worker has been created yet.
+        unsafe { std::env::set_var("WINIT_X11_SCALE_FACTOR", "1") };
+    }
+}
+
+pub(crate) fn active() -> bool {
+    use std::os::unix::fs::FileTypeExt as _;
+    std::env::var_os("GAMESCOPE_WAYLAND_DISPLAY")
+        .filter(|name| !name.is_empty())
+        .and_then(|path| std::fs::metadata(path).ok())
+        .is_some_and(|metadata| metadata.file_type().is_socket())
+}
+
+/// The control center includes its custom caption in the client size. Fit it
+/// once on creation; viewer windows and small floating panels keep their sizes.
+pub(crate) fn fit_control_center(window: &Window) {
+    if !active() {
+        return;
+    }
+    if let Some(monitor) = window
+        .current_monitor()
+        .or_else(|| window.available_monitors().next())
+    {
+        let size = monitor.size();
+        if size.width != 0 && size.height != 0 {
+            let _ = window.request_inner_size(size);
+            let origin = monitor.position();
+            window.set_outer_position(PhysicalPosition::new(origin.x, origin.y));
+        }
+    }
+}
+
+/// Gamescope has no Plasma session to start KWallet on the user's behalf.
+/// Help/version and repeat-instance activation never reach this GUI hook.
+pub(crate) fn prepare_wallet() -> Result<()> {
+    if active() {
+        pollster::block_on(prepare_wallet_async()).context("准备系统钱包失败")?;
+    }
+    Ok(())
+}
+
+async fn prepare_wallet_async() -> Result<()> {
+    let connection = zbus::Connection::session()
+        .await
+        .context("连接会话总线失败")?;
+    let bus = zbus::Proxy::new(
+        &connection,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+    )
+    .await?;
+    let available: bool = bus.call("NameHasOwner", &(SECRET_SERVICE,)).await?;
+    if !available {
+        // Do not import HOME or XDG data paths: the credential daemon must keep
+        // using its host wallet even when this client is running portably.
+        let graphical = graphical_environment(|key| std::env::var(key).ok());
+        bus.call::<_, _, ()>("UpdateActivationEnvironment", &(graphical,))
+            .await?;
+        let service = if Path::new("/usr/bin/ksecretd").exists() {
+            "org.kde.secretservicecompat"
+        } else {
+            SECRET_SERVICE
+        };
+        let _: u32 = bus.call("StartServiceByName", &(service, 0u32)).await?;
+    }
+    let secrets = zbus::Proxy::new(
+        &connection,
+        SECRET_SERVICE,
+        SECRET_PATH,
+        "org.freedesktop.Secret.Service",
+    )
+    .await?;
+    let collection: OwnedObjectPath = secrets.call("ReadAlias", &("default",)).await?;
+    if collection.as_str() == "/" {
+        // A new account still uses the provider's ordinary first-use flow.
+        return Ok(());
+    }
+    let properties = zbus::Proxy::new(
+        &connection,
+        SECRET_SERVICE,
+        collection.as_str(),
+        "org.freedesktop.DBus.Properties",
+    )
+    .await?;
+    let locked: OwnedValue = properties
+        .call("Get", &("org.freedesktop.Secret.Collection", "Locked"))
+        .await?;
+    if !bool::try_from(locked).context("读取钱包锁定状态失败")? {
+        return Ok(());
+    }
+    let (_, prompt): (Vec<OwnedObjectPath>, OwnedObjectPath) =
+        secrets.call("Unlock", &(vec![collection.clone()],)).await?;
+    if prompt.as_str() == "/" {
+        return Ok(());
+    }
+    let owner: String = bus.call("GetNameOwner", &(SECRET_SERVICE,)).await?;
+    let pid: u32 = bus.call("GetConnectionUnixProcessID", &(&owner,)).await?;
+    let prompt_proxy = zbus::Proxy::new(
+        &connection,
+        SECRET_SERVICE,
+        prompt.as_str(),
+        "org.freedesktop.Secret.Prompt",
+    )
+    .await?;
+    // Subscribe before Prompt: an already-unlocked provider may finish at once.
+    let mut completed = prompt_proxy.receive_signal("Completed").await?;
+    prompt_proxy.call::<_, _, ()>("Prompt", &("",)).await?;
+    let mut windows = WalletWindows::new(pid).ok();
+    let deadline = Instant::now() + Duration::from_secs(180);
+    loop {
+        if let Some(message) = completed.next().now_or_never() {
+            let message = message.context("系统钱包在解锁前断开")?;
+            if message.header().sender().map(|name| name.as_str()) != Some(owner.as_str()) {
+                continue;
+            }
+            let (dismissed, _): (bool, OwnedValue) = message.body().deserialize()?;
+            ensure!(!dismissed, "系统钱包解锁已取消");
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            // Dismiss only this prompt, leaving the shared wallet service alone.
+            let _ = prompt_proxy.call::<_, _, ()>("Dismiss", &()).await;
+            bail!("系统钱包解锁超时");
+        }
+        if let Some(windows) = &mut windows {
+            windows.attach();
+        }
+        // This private bootstrap loop runs before the GUI or Tokio workers.
+        // zbus dispatches on its own async-io executor while we wait for a user.
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+struct WalletWindows {
+    connection: x11rb::rust_connection::RustConnection,
+    root: u32,
+    pid: u32,
+    pid_atom: u32,
+    steam_atom: u32,
+    appid: u32,
+    seen: HashSet<u32>,
+}
+
+impl WalletWindows {
+    fn new(pid: u32) -> Result<Self> {
+        use x11rb::connection::Connection as _;
+        use x11rb::protocol::xproto::ConnectionExt as _;
+        let appid = std::env::var("SteamAppId")?.parse::<u32>()?;
+        ensure!(appid != 0, "没有 Steam 应用 ID");
+        let (connection, screen) = x11rb::connect(None)?;
+        let root = connection.setup().roots[screen].root;
+        let pid_atom = connection.intern_atom(false, b"_NET_WM_PID")?.reply()?.atom;
+        let steam_atom = connection.intern_atom(false, b"STEAM_GAME")?.reply()?.atom;
+        Ok(Self {
+            connection,
+            root,
+            pid,
+            pid_atom,
+            steam_atom,
+            appid,
+            seen: HashSet::new(),
+        })
+    }
+
+    fn attach(&mut self) {
+        use x11rb::connection::Connection as _;
+        use x11rb::protocol::xproto::{
+            AtomEnum, ConfigureWindowAux, ConnectionExt as _, InputFocus, MapState, PropMode,
+            StackMode,
+        };
+        use x11rb::wrapper::ConnectionExt as _;
+        let Some(tree) = self
+            .connection
+            .query_tree(self.root)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+        else {
+            return;
+        };
+        for window in tree.children {
+            if self.seen.contains(&window) {
+                continue;
+            }
+            let result = (|| -> Result<()> {
+                let attributes = self.connection.get_window_attributes(window)?.reply()?;
+                let geometry = self.connection.get_geometry(window)?.reply()?;
+                if attributes.map_state != MapState::VIEWABLE
+                    || geometry.width < 100
+                    || geometry.height < 40
+                {
+                    return Ok(());
+                }
+                let property = self
+                    .connection
+                    .get_property(false, window, self.pid_atom, AtomEnum::CARDINAL, 0, 1)?
+                    .reply()?;
+                if property.value32().and_then(|mut values| values.next()) != Some(self.pid) {
+                    return Ok(());
+                }
+                self.connection
+                    .change_property32(
+                        PropMode::REPLACE,
+                        window,
+                        self.steam_atom,
+                        AtomEnum::CARDINAL,
+                        &[self.appid],
+                    )?
+                    .check()?;
+                self.connection
+                    .configure_window(
+                        window,
+                        &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
+                    )?
+                    .check()?;
+                self.connection
+                    .set_input_focus(InputFocus::PARENT, window, x11rb::CURRENT_TIME)?
+                    .check()?;
+                self.connection.flush()?;
+                self.seen.insert(window);
+                Ok(())
+            })();
+            if let Err(error) = result {
+                tracing::debug!(%error, "wallet dialog is not ready for Gamescope focus");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wallet_activation_keeps_host_credential_storage() {
+        let environment = HashMap::from([
+            ("DISPLAY", ":1"),
+            ("GAMESCOPE_WAYLAND_DISPLAY", "/run/user/1000/gamescope-0"),
+            ("HOME", "/portable/home"),
+            ("XDG_DATA_HOME", "/portable/data"),
+            ("XDG_RUNTIME_DIR", "/portable/runtime"),
+        ]);
+        let activation =
+            graphical_environment(|key| environment.get(key).map(|value| value.to_string()));
+        assert_eq!(activation["DISPLAY"], ":1");
+        assert_eq!(
+            activation["GAMESCOPE_WAYLAND_DISPLAY"],
+            "/run/user/1000/gamescope-0"
+        );
+        assert_eq!(activation["WAYLAND_DISPLAY"], "");
+        for key in ["HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR"] {
+            assert!(!activation.contains_key(key));
+        }
+    }
+}

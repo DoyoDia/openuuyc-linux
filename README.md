@@ -4,7 +4,7 @@
 
 OpenUUYC 是用 Rust 编写的 UU 远程第三方客户端，支持 Windows 和 Linux，支持主控、被控和远程协助。
 
-后续计划支持 Linux 等其他平台，移植工作请先通过 [Issue](https://github.com/djkcyl/openuuyc/issues) 沟通。
+Linux 版原生支持 X11、Wayland 与 SteamOS 游戏模式，无需 Wine 或 Proton。
 
 ## 下载与使用
 
@@ -241,6 +241,8 @@ sudo pacman -S --needed xdg-desktop-portal-gnome   # KDE 为 xdg-desktop-portal-
 - **老 Intel GPU / 虚拟机**：Haswell/Broadwell 的 Vulkan 驱动未通过一致性认证，程序仍会使用它（设 `WGPU_ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER=0` 恢复 wgpu 默认的隐藏行为）；驱动无法向 Wayland surface 呈现时，可安装 `vulkan-swrast`（lavapipe）并用 `OPENUUYC_BACKEND=gl` 或 `OPENUUYC_BACKEND=vulkan` 指定界面后端。
 
 #### 运行前提与开关
+
+- **SteamOS 游戏模式**：将原生程序添加为非 Steam 游戏，无需指定兼容性工具。启动时自动处理 Gamescope 显示连接与 1 倍缩放，控制中心匹配当前屏幕尺寸；登录凭据继续使用系统钱包，钱包锁定时先显示解锁窗口。
 
 - **运行环境**：登录态存在系统密钥环（Secret Service，需要 gnome-keyring、KWallet 等，没有明文回退）。托盘用 StatusNotifierItem，GNOME 需要 AppIndicator 扩展（Ubuntu 默认启用），桌面没有托盘时关闭窗口即退出；面板比程序晚起来时每 2 秒重试，托盘一出现就改回关闭收进托盘。粘贴远端文件要 `fuse3`。Wayland 会话被控也要有 XWayland（显示器列表与输入注入器都先连 X 服务器）；缩放（含分数缩放）的桌面上，门户共享的屏幕按合成器 `xdg-output` 布局里的输出名与所选显示器配对，需要 XWayland 23.1 及以上（输出以连接器命名）且程序能拿到 `WAYLAND_DISPLAY`，配不上时报错，不会采错屏。拖出文件的预览图要 `gio` 与 `rsvg-convert`。
 - **开机自启**：桌面接进 `graphical-session.target` 时是 systemd 用户单元 `openuuyc.service`（`journalctl --user -u openuuyc` 看日志），否则写 `~/.config/autostart/openuuyc.desktop`。两者都不处理的合成器（无 uwsm 的 sway、Hyprland 等）请自行启动 `OpenUUYC gui --background`。再次启动程序会经 `$XDG_RUNTIME_DIR/openuuyc/control.sock` 唤起已运行的控制中心。
