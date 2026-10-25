@@ -49,7 +49,7 @@ pub struct GuiOptions {
 
 pub fn run(options: GuiOptions) -> Result<()> {
     #[cfg(target_os = "linux")]
-    crate::platform::linux::gamescope::prepare_wallet()?;
+    crate::platform::linux::gamescope::prepare_wallet();
     // The installed Windows service's user-side backend and its migration
     // recovery; Linux has no installed service.
     #[cfg(windows)]

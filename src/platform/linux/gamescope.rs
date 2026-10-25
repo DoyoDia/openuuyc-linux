@@ -46,11 +46,17 @@ fn graphical_environment(read: impl Fn(&str) -> Option<String>) -> HashMap<&'sta
 }
 
 /// Called by bootstrap before argument parsing or application worker creation.
+/// Outside Gamescope the environment is left exactly as the session set it:
+/// children (terminal shells, opened files) inherit it.
 pub(crate) fn initialize_environment() {
     let runtime = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() })));
-    for key in ["WAYLAND_DISPLAY", "GAMESCOPE_WAYLAND_DISPLAY"] {
+    // `active()` needs the Gamescope socket as a path, so resolve it first.
+    for key in ["GAMESCOPE_WAYLAND_DISPLAY", "WAYLAND_DISPLAY"] {
+        if key == "WAYLAND_DISPLAY" && !active() {
+            break;
+        }
         if let Some(name) = std::env::var_os(key).filter(|name| !name.is_empty()) {
             let mut path = socket_path(&runtime, &name);
             if !Path::new(&name).is_absolute() && !path.exists() {
@@ -103,11 +109,14 @@ pub(crate) fn fit_control_center(window: &Window) {
 
 /// Gamescope may have no desktop session to activate and unlock a wallet.
 /// Help/version and repeat-instance activation never reach this GUI hook.
-pub(crate) fn prepare_wallet() -> Result<()> {
-    if active() {
-        pollster::block_on(prepare_wallet_async()).context("准备系统钱包失败")?;
+/// Best effort: the keyring itself reports a wallet it cannot use when the
+/// login is read, so a failure here never keeps the program from starting.
+pub(crate) fn prepare_wallet() {
+    if active()
+        && let Err(error) = pollster::block_on(prepare_wallet_async())
+    {
+        tracing::warn!(error = %format!("{error:#}"), "准备系统钱包失败");
     }
-    Ok(())
 }
 
 async fn activate_wallet(bus: &zbus::Proxy<'_>) -> Result<String> {
