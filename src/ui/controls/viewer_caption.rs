@@ -56,7 +56,10 @@ pub(crate) fn viewer_caption_button(
         icon,
         ViewerCaptionIcon::Fullscreen | ViewerCaptionIcon::ExitFullscreen
     ) {
-        egui::vec2(44.0, theme::WINDOW_TITLE_CONTENT_HEIGHT)
+        egui::vec2(
+            theme::VIEWER_FULLSCREEN_BUTTON_WIDTH,
+            theme::WINDOW_TITLE_CONTENT_HEIGHT,
+        )
     } else {
         egui::Vec2::splat(theme::VIEWER_CAPTION_BUTTON)
     };

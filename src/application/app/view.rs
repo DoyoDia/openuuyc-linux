@@ -1254,10 +1254,14 @@ impl DeviceCenterApp {
             self.host_settings(ui);
             self.notification_settings(ui);
             section(ui, "本机作为主控");
-            #[cfg(target_os = "linux")]
-            form_row(ui, "全屏悬浮球", "", |ui| {
-                crate::ui::controls::switch(ui, &mut self.media.fullscreen_floating_ball);
-            });
+            form_row(
+                ui,
+                "全屏悬浮球",
+                "触屏全屏时点右侧圆球展开操作栏",
+                |ui| {
+                    crate::ui::controls::switch(ui, &mut self.media.fullscreen_floating_ball);
+                },
+            );
             form_row(ui, "串流帧率", "以远端实际刷新率为准", |ui| {
                 egui::ComboBox::from_id_salt("center-fps")
                     .width(238.0)

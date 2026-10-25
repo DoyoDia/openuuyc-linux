@@ -2,13 +2,10 @@
 use super::ConnectionMediaOptions;
 use anyhow::{Context, Result};
 use std::io::Write;
-#[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicBool, Ordering};
 
-#[cfg(target_os = "linux")]
 static FULLSCREEN_FLOATING_BALL: AtomicBool = AtomicBool::new(false);
 
-#[cfg(target_os = "linux")]
 pub(crate) fn fullscreen_floating_ball() -> bool {
     FULLSCREEN_FLOATING_BALL.load(Ordering::Acquire)
 }
@@ -20,7 +17,6 @@ fn path() -> Result<std::path::PathBuf> {
 }
 pub fn load() -> Result<ConnectionMediaOptions> {
     let options = load_from(&path()?)?;
-    #[cfg(target_os = "linux")]
     FULLSCREEN_FLOATING_BALL.store(options.fullscreen_floating_ball, Ordering::Release);
     Ok(options)
 }
@@ -34,7 +30,6 @@ pub(super) fn load_from(path: &std::path::Path) -> Result<ConnectionMediaOptions
 }
 pub(crate) fn save(options: ConnectionMediaOptions) -> Result<()> {
     save_to(&path()?, options)?;
-    #[cfg(target_os = "linux")]
     FULLSCREEN_FLOATING_BALL.store(options.fullscreen_floating_ball, Ordering::Release);
     Ok(())
 }
@@ -65,7 +60,7 @@ pub(super) fn save_to(path: &std::path::Path, options: ConnectionMediaOptions) -
     result.context("保存编解码首选设置失败")
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

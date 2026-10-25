@@ -15,13 +15,9 @@ pub(in crate::application::viewer) struct FullscreenChrome {
     last_used: Option<Instant>,
     hint_until: Option<Instant>,
     rect: Option<egui::Rect>,
-    #[cfg(target_os = "linux")]
     ball_enabled: bool,
-    #[cfg(target_os = "linux")]
     touch_opened: bool,
-    #[cfg(target_os = "linux")]
     ball_rect: Option<egui::Rect>,
-    #[cfg(target_os = "linux")]
     touches: Vec<(winit::event::DeviceId, u64)>,
 }
 
@@ -35,24 +31,16 @@ impl FullscreenChrome {
     }
 
     pub(in crate::application::viewer) fn sync(&mut self, active: bool) {
-        #[cfg(target_os = "linux")]
         let ball_enabled = crate::media::preferences::fullscreen_floating_ball();
-        #[cfg(not(target_os = "linux"))]
-        let ball_enabled = false;
         self.sync_mode(active, ball_enabled);
     }
 
     fn sync_mode(&mut self, active: bool, ball_enabled: bool) {
-        #[cfg(target_os = "linux")]
-        let same_mode = self.ball_enabled == ball_enabled;
-        #[cfg(not(target_os = "linux"))]
-        let same_mode = true;
-        if self.active == active && same_mode {
+        if self.active == active && self.ball_enabled == ball_enabled {
             return;
         }
         *self = Self {
             active,
-            #[cfg(target_os = "linux")]
             ball_enabled,
             ..Self::default()
         };
@@ -68,37 +56,25 @@ impl FullscreenChrome {
         ctx: &egui::Context,
         relative: bool,
     ) -> bool {
-        #[cfg(target_os = "linux")]
-        {
-            // Keep the unlocked local pointer while the toolbar is open, even
-            // after a finger lifts or moves away from the floating controls.
-            let rect = if self.ball_enabled {
-                self.ball_rect
-            } else {
-                self.rect
-            };
-            self.active
-                && (((self.ball_enabled || self.touch_opened) && self.expanded)
-                    || (!relative
-                        && rect.is_some_and(|rect| {
-                            ctx.input(|i| i.pointer.hover_pos().is_some_and(|p| rect.contains(p)))
-                        })))
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            // Game input keeps its locked cursor. The existing release-control
-            // shortcut makes this UI reachable without changing fullscreen state.
-            self.active
-                && !relative
-                && self.rect.is_some_and(|rect| {
-                    ctx.input(|i| i.pointer.hover_pos().is_some_and(|p| rect.contains(p)))
-                })
-        }
+        // Game input keeps its locked cursor: hovering never opens the bar
+        // then, the release-control shortcut does. A tap on the ball or the
+        // strip keeps the unlocked local pointer while the bar is open, even
+        // after the finger lifts or moves away from the floating controls.
+        let rect = if self.ball_enabled {
+            self.ball_rect
+        } else {
+            self.rect
+        };
+        self.active
+            && (((self.ball_enabled || self.touch_opened) && self.expanded)
+                || (!relative
+                    && rect.is_some_and(|rect| {
+                        ctx.input(|i| i.pointer.hover_pos().is_some_and(|p| rect.contains(p)))
+                    })))
     }
 
     /// A touchscreen can reach local controls while the game owns the pointer.
     /// Consume its whole activation gesture so it cannot also click the remote.
-    #[cfg(target_os = "linux")]
     pub(in crate::application::viewer) fn intercept_touch(
         &mut self,
         ctx: &egui::Context,
@@ -147,7 +123,6 @@ impl FullscreenChrome {
         pending: bool,
         caption: impl FnOnce(&mut egui::Ui) -> R,
     ) -> R {
-        #[cfg(target_os = "linux")]
         if self.ball_enabled {
             return self.show_ball(ctx, caption);
         }
@@ -155,7 +130,6 @@ impl FullscreenChrome {
     }
 
     /// Neither the activation ball nor the caption reserves video space.
-    #[cfg(target_os = "linux")]
     fn show_ball<R: Default>(
         &mut self,
         ctx: &egui::Context,
@@ -245,7 +219,6 @@ impl FullscreenChrome {
         pending: bool,
         caption: impl FnOnce(&mut egui::Ui) -> R,
     ) -> R {
-        #[cfg(target_os = "linux")]
         {
             self.ball_rect = None;
             let pressed = ctx.input(|i| {
@@ -306,7 +279,6 @@ impl FullscreenChrome {
                         });
                 } else {
                     let (expand, hit_rect) = controls::viewer_fullscreen_handle(ui);
-                    #[cfg(target_os = "linux")]
                     {
                         self.ball_rect = Some(hit_rect);
                     }
@@ -336,15 +308,12 @@ fn floating_width(ctx: &egui::Context) -> f32 {
 
 fn show_hint(ctx: &egui::Context, top: f32) {
     let fullscreen = viewer_shortcuts::label(Action::Fullscreen);
-    #[cfg(not(target_os = "linux"))]
     let release = viewer_shortcuts::label(Action::ReleaseMouse);
     let mut text = String::from("已进入全屏 · 鼠标移至顶部横条可展开操作栏并退出全屏");
     if fullscreen != "未绑定" {
         text.push_str(&format!("\n退出全屏：{fullscreen}"));
     }
-    #[cfg(target_os = "linux")]
     text.push_str("\n触屏可点击顶部横条展开操作栏，点回画面收起");
-    #[cfg(not(target_os = "linux"))]
     if release != "未绑定" {
         text.push_str(&format!("\n游戏鼠标锁定时，先按 {release} 释放键鼠"));
     }
@@ -370,7 +339,6 @@ fn show_hint(ctx: &egui::Context, top: f32) {
     painter.galley(rect.min + egui::vec2(12.0, 8.0), galley, theme::TEXT);
 }
 
-#[cfg(target_os = "linux")]
 fn outside_controls(ctx: &egui::Context, position: egui::Pos2) -> bool {
     !ctx.any_popup_open()
         && ctx.memory(|memory| memory.top_modal_layer().is_none())
@@ -379,7 +347,7 @@ fn outside_controls(ctx: &egui::Context, position: egui::Pos2) -> bool {
             .is_none_or(|layer| layer.order == egui::Order::Background)
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use winit::event::{DeviceId, Touch, TouchPhase, WindowEvent};

@@ -240,6 +240,15 @@ impl ThreadedWindowsApp {
             }
             return Ok(());
         }
+        // A touch on the fullscreen ball or strip belongs to the local bar,
+        // never to the remote: the whole gesture skips egui and the video.
+        if self
+            .fullscreen_chrome
+            .intercept_touch(&self.egui_context, event)
+        {
+            window.request_redraw();
+            return Ok(());
+        }
         let response = self.egui_winit.on_window_event(window, event);
         if let WindowEvent::Focused(focused) = event {
             tracing::debug!(focused, mouse_mode = ?self.stream_control.mouse().mode(),
@@ -698,7 +707,9 @@ impl ThreadedWindowsApp {
             self.fit_window_to_current_aspect(window);
         }
         self.last_aspect_video_size = current_video_size;
-        if chrome_action.exit_fullscreen && window.fullscreen().is_some() {
+        if chrome_action.toggle_fullscreen
+            || (chrome_action.exit_fullscreen && window.fullscreen().is_some())
+        {
             self.apply_shortcut(window, ViewerShortcut::Fullscreen)?;
         }
         if chrome_action.close {

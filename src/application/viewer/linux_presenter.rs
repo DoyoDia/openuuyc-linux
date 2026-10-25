@@ -2552,7 +2552,11 @@ impl Player {
         self.cursor_note("painted");
     }
 
-    /// Player commands share the caption with display tabs and window controls.
+    /// The player commands, placed in the window caption between the title and
+    /// the window buttons. The Windows player has the same row, in the same
+    /// order, with the same icons — 鼠标、麦克风、1:1、批注、插件、画质，最右是
+    /// 全屏，再往右是窗口按钮。Linux 上还没实现的那几个画成禁用而不是不画：
+    /// 一眼就能看出缺什么。
     pub(super) fn title_bar_controls(
         &mut self,
         ui: &mut egui::Ui,
@@ -2580,7 +2584,7 @@ impl Player {
         row.set_clip_rect(rect);
         row.spacing_mut().item_spacing.x = 4.0;
 
-        // Keep fullscreen reachable before optional actions consume caption width.
+        // 全屏放在最右：没有键盘（触屏、游戏模式）也能进出全屏。Windows 同位置。
         let fullscreen = window.fullscreen().is_some();
         if caption_button(
             &mut row,
@@ -2597,7 +2601,7 @@ impl Player {
             toggle_fullscreen(window);
         }
 
-        // Stream quality and capture settings sit next to the fullscreen action.
+        // 画质与串流设置，紧挨着全屏。Windows 的 Quality 也在这里。
         if caption_button(
             &mut row,
             ViewerCaptionIcon::Quality,
@@ -2745,7 +2749,8 @@ impl Player {
             self.set_control(!controlling);
         }
 
-        // Errors use dismissible notices so screen tabs keep the remaining width.
+        // 这里没有常驻的错误文字：屏标签要用这排按钮左边的全部宽度，错误一律走
+        // 可关闭的弹窗（见 `publish_error`）。
         let free = egui::Rect::from_min_max(
             rect.min,
             egui::pos2((row.min_rect().left() - 6.0).max(rect.min.x), rect.max.y),
