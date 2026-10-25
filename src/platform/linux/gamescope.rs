@@ -15,6 +15,17 @@ use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 
 const SECRET_SERVICE: &str = "org.freedesktop.secrets";
 const SECRET_PATH: &str = "/org/freedesktop/secrets";
+const KWALLET_SERVICE: &str = "org.kde.secretservicecompat";
+
+fn kwallet_fallback_allowed(error_name: Option<&str>, services: &[String]) -> bool {
+    error_name == Some("org.freedesktop.DBus.Error.ServiceUnknown")
+        && !services.iter().any(|name| name == SECRET_SERVICE)
+        && services.iter().any(|name| name == KWALLET_SERVICE)
+}
+
+fn is_kwallet_owner(owner: &str, compatibility_owner: Option<&str>) -> bool {
+    owner.starts_with(':') && compatibility_owner == Some(owner)
+}
 
 /// Absolute names keep working after a launcher redirects XDG_RUNTIME_DIR.
 fn socket_path(runtime: &Path, name: &std::ffi::OsStr) -> PathBuf {
@@ -90,13 +101,55 @@ pub(crate) fn fit_control_center(window: &Window) {
     }
 }
 
-/// Gamescope has no Plasma session to start KWallet on the user's behalf.
+/// Gamescope may have no desktop session to activate and unlock a wallet.
 /// Help/version and repeat-instance activation never reach this GUI hook.
 pub(crate) fn prepare_wallet() -> Result<()> {
     if active() {
         pollster::block_on(prepare_wallet_async()).context("准备系统钱包失败")?;
     }
     Ok(())
+}
+
+async fn activate_wallet(bus: &zbus::Proxy<'_>) -> Result<String> {
+    let available: bool = bus.call("NameHasOwner", &(SECRET_SERVICE,)).await?;
+    if !available {
+        // Do not import HOME or XDG data paths: the credential daemon must keep
+        // using its host wallet even when this client is running portably.
+        let graphical = graphical_environment(|key| std::env::var(key).ok());
+        bus.call::<_, _, ()>("UpdateActivationEnvironment", &(graphical,))
+            .await?;
+        // Always honor the configured default, even when KWallet is installed.
+        // Only a missing activation entry permits the KDE compatibility alias;
+        // a broken or denied default must not silently select another wallet.
+        if let Err(error) = bus
+            .call::<_, _, u32>("StartServiceByName", &(SECRET_SERVICE, 0u32))
+            .await
+        {
+            let error_name = match &error {
+                zbus::Error::MethodError(name, _, _) => Some(name.as_str()),
+                _ => None,
+            };
+            if error_name != Some("org.freedesktop.DBus.Error.ServiceUnknown") {
+                return Err(error.into());
+            }
+            let services: Vec<String> = bus.call("ListActivatableNames", &()).await?;
+            if !kwallet_fallback_allowed(error_name, &services) {
+                return Err(error.into());
+            }
+            // A provider may have appeared while activation entries were read.
+            let available: bool = bus.call("NameHasOwner", &(SECRET_SERVICE,)).await?;
+            if !available {
+                let _: u32 = bus
+                    .call("StartServiceByName", &(KWALLET_SERVICE, 0u32))
+                    .await?;
+            }
+        }
+    }
+    // The compatibility alias can exist with Secret Service disabled. Require
+    // the real interface, then pin all operations to this unique bus owner.
+    bus.call("GetNameOwner", &(SECRET_SERVICE,))
+        .await
+        .context("系统钱包未提供 Secret Service 接口")
 }
 
 async fn prepare_wallet_async() -> Result<()> {
@@ -110,23 +163,10 @@ async fn prepare_wallet_async() -> Result<()> {
         "org.freedesktop.DBus",
     )
     .await?;
-    let available: bool = bus.call("NameHasOwner", &(SECRET_SERVICE,)).await?;
-    if !available {
-        // Do not import HOME or XDG data paths: the credential daemon must keep
-        // using its host wallet even when this client is running portably.
-        let graphical = graphical_environment(|key| std::env::var(key).ok());
-        bus.call::<_, _, ()>("UpdateActivationEnvironment", &(graphical,))
-            .await?;
-        let service = if Path::new("/usr/bin/ksecretd").exists() {
-            "org.kde.secretservicecompat"
-        } else {
-            SECRET_SERVICE
-        };
-        let _: u32 = bus.call("StartServiceByName", &(service, 0u32)).await?;
-    }
+    let owner = activate_wallet(&bus).await?;
     let secrets = zbus::Proxy::new(
         &connection,
-        SECRET_SERVICE,
+        owner.as_str(),
         SECRET_PATH,
         "org.freedesktop.Secret.Service",
     )
@@ -138,7 +178,7 @@ async fn prepare_wallet_async() -> Result<()> {
     }
     let properties = zbus::Proxy::new(
         &connection,
-        SECRET_SERVICE,
+        owner.as_str(),
         collection.as_str(),
         "org.freedesktop.DBus.Properties",
     )
@@ -154,19 +194,17 @@ async fn prepare_wallet_async() -> Result<()> {
     if prompt.as_str() == "/" {
         return Ok(());
     }
-    let owner: String = bus.call("GetNameOwner", &(SECRET_SERVICE,)).await?;
-    let pid: u32 = bus.call("GetConnectionUnixProcessID", &(&owner,)).await?;
     let prompt_proxy = zbus::Proxy::new(
         &connection,
-        SECRET_SERVICE,
+        owner.as_str(),
         prompt.as_str(),
         "org.freedesktop.Secret.Prompt",
     )
     .await?;
     // Subscribe before Prompt: an already-unlocked provider may finish at once.
     let mut completed = prompt_proxy.receive_signal("Completed").await?;
+    let mut windows = kwallet_windows(&bus, &owner).await;
     prompt_proxy.call::<_, _, ()>("Prompt", &("",)).await?;
-    let mut windows = WalletWindows::new(pid).ok();
     let deadline = Instant::now() + Duration::from_secs(180);
     loop {
         if let Some(message) = completed.next().now_or_never() {
@@ -192,7 +230,21 @@ async fn prepare_wallet_async() -> Result<()> {
     }
 }
 
-struct WalletWindows {
+async fn kwallet_windows(bus: &zbus::Proxy<'_>, owner: &str) -> Option<KWalletWindows> {
+    // KWallet registers both names on the same connection. Other providers can
+    // delegate prompts to a separate process, so their PID is not a UI identity.
+    let compatibility_owner: String = bus.call("GetNameOwner", &(KWALLET_SERVICE,)).await.ok()?;
+    if !is_kwallet_owner(owner, Some(&compatibility_owner)) {
+        return None;
+    }
+    let pid: u32 = bus
+        .call("GetConnectionUnixProcessID", &(owner,))
+        .await
+        .ok()?;
+    KWalletWindows::new(pid).ok()
+}
+
+struct KWalletWindows {
     connection: x11rb::rust_connection::RustConnection,
     root: u32,
     pid: u32,
@@ -202,7 +254,7 @@ struct WalletWindows {
     seen: HashSet<u32>,
 }
 
-impl WalletWindows {
+impl KWalletWindows {
     fn new(pid: u32) -> Result<Self> {
         use x11rb::connection::Connection as _;
         use x11rb::protocol::xproto::ConnectionExt as _;
@@ -281,7 +333,7 @@ impl WalletWindows {
                 Ok(())
             })();
             if let Err(error) = result {
-                tracing::debug!(%error, "wallet dialog is not ready for Gamescope focus");
+                tracing::debug!(%error, "KWallet dialog is not ready for Gamescope focus");
             }
         }
     }
@@ -311,5 +363,32 @@ mod tests {
         for key in ["HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR"] {
             assert!(!activation.contains_key(key));
         }
+    }
+
+    #[test]
+    fn wallet_fallback_never_replaces_a_configured_provider() {
+        let kde = vec![KWALLET_SERVICE.to_string()];
+        let both = vec![SECRET_SERVICE.to_string(), KWALLET_SERVICE.to_string()];
+        let unknown = Some("org.freedesktop.DBus.Error.ServiceUnknown");
+        assert!(kwallet_fallback_allowed(unknown, &kde));
+        assert!(!kwallet_fallback_allowed(unknown, &both));
+        assert!(!kwallet_fallback_allowed(unknown, &[]));
+        for error in [
+            None,
+            Some("org.freedesktop.DBus.Error.AccessDenied"),
+            Some("org.freedesktop.DBus.Error.TimedOut"),
+            Some("org.freedesktop.DBus.Error.Spawn.ChildExited"),
+        ] {
+            assert!(!kwallet_fallback_allowed(error, &kde));
+        }
+    }
+
+    #[test]
+    fn wallet_window_workaround_requires_the_same_kwallet_connection() {
+        assert!(is_kwallet_owner(":1.42", Some(":1.42")));
+        assert!(!is_kwallet_owner(":1.42", Some(":1.43")));
+        assert!(!is_kwallet_owner(":1.42", None));
+        assert!(!is_kwallet_owner("", Some("")));
+        assert!(!is_kwallet_owner(SECRET_SERVICE, Some(SECRET_SERVICE)));
     }
 }
