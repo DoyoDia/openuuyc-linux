@@ -252,6 +252,10 @@ impl StreamControlHandle {
         }
         anyhow::ensure!(payload.len() <= 16 * 1024, "mouse command too large");
         let value: serde_json::Value = serde_json::from_slice(payload)?;
+        if let Some(vibration) = crate::protocol::gamepad::GamepadVibration::parse(&value)? {
+            self.mouse().receive_gamepad_vibration(vibration);
+            return Ok(());
+        }
         if value.get("action").and_then(|v| v.as_str()) != Some("special_game_mouse") {
             return Ok(());
         }

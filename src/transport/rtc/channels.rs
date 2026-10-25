@@ -439,7 +439,7 @@ pub(super) async fn send_remote_input(
             _ = mouse.epoch_cancelled(epoch) => Err(anyhow::anyhow!("鼠标连接代次已变更")),
             result = tokio::time::timeout(event.event.send_timeout(),
                 async {
-                    let release=matches!(event.event,crate::features::remote_input::InputEvent::Button{down:false,..}|crate::features::remote_input::InputEvent::Key{down:false,..}|crate::features::remote_input::InputEvent::AssistButton{down:false,..});
+                    let release=event.event.release();
                     if !release {
                         if kcp.is_negotiated() {
                             kcp.wait_input_capacity().await?;
@@ -483,6 +483,7 @@ pub(super) async fn send_remote_input(
                 | InputEvent::Correction { .. } => "movement",
                 InputEvent::Wheel { .. } => "wheel",
                 InputEvent::Heartbeat => "keyboard_heartbeat",
+                InputEvent::Gamepad(_) => "gamepad",
             };
             tracing::warn!(target: "openuuyc::transport::rtc::input", %error, input_kind=kind,
                 carrier=if kcp.is_negotiated(){"mixed_kcp"}else{"sctp"},

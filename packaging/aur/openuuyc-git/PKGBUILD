@@ -16,6 +16,7 @@ depends=('gcc-libs' 'fuse3' 'libx11' 'libxcb' 'libxrandr' 'libxi' 'libxcursor'
          'libxfixes' 'libxkbcommon' 'libxkbcommon-x11' 'wayland'
          'vulkan-icd-loader' 'noto-fonts-cjk' 'gnome-keyring')
 optdepends=(
+    'sdl2-compat: standard gamepad forwarding and rumble'
     'libva: H.264 hardware decoding'
     'libva-nvidia-driver: NVIDIA VA-API decoding'
     'intel-media-driver: Intel VA-API decoding'

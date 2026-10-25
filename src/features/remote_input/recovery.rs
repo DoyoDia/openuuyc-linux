@@ -124,6 +124,9 @@ impl RemoteInput {
                 // pass before future input, not proof of OS input injection.
                 s.remote_keys.clear();
                 s.remote_held = [false; 5];
+                s.remote_gamepads.clear();
+                s.confirmed_gamepads.clear();
+                s.gamepad_feedback.clear();
                 s.transport_recovery.as_mut().unwrap().confirmed = true;
                 tracing::info!(
                     "remote input transport drained; awaiting focused neutral activation"
