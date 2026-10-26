@@ -1380,7 +1380,8 @@ mod tests {
         assert_eq!((picture.width, picture.height), (2, 2));
         assert_eq!(picture.pixels, pixels);
         // A buffer too small for the format says so instead of failing quietly.
-        data.maxsize = 8;
+        // Through the buffer's pointer: `data` itself is mutably borrowed there.
+        unsafe { (*buffer.datas).maxsize = 8 };
         let Err(error) = (unsafe { read_picture(&mut buffer, format, None) }) else {
             panic!("a buffer too small for the format was read");
         };
