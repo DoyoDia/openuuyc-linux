@@ -21,7 +21,7 @@ use cros_libva::{
     EncPackedHeaderParameter, EncPictureParameterBufferH264, EncSequenceParameterBufferH264,
     EncSliceParameterBufferH264, H264EncPicFields, H264EncSeqFields, H264VuiFields,
     MappedCodedBuffer, Picture, PictureH264, RcFlags, Surface, UsageHint, VAConfigAttrib,
-    VAConfigAttribType, VAEntrypoint, VAProfile, VASurfaceID,
+    VAConfigAttribType, VAEntrypoint, VAProfile,
 };
 
 use crate::media::encoding::{Encoded, Format, Rate};
@@ -29,7 +29,7 @@ use crate::media::encoding::{Encoded, Format, Rate};
 /// NV12 (8-bit 4:2:0), the only layout this encoder feeds.
 const RT_FORMAT_YUV420: u32 = cros_libva::VA_RT_FORMAT_YUV420;
 
-/// Surfaces the encoder cycles through: one being filled, one being encoded,
+/// Reconstructed pictures the encoder cycles through: the one being written
 /// and enough left for the driver to keep its reference frames.
 const SURFACE_COUNT: usize = 4;
 
@@ -68,13 +68,15 @@ impl From<cros_libva::VaError> for EncodeError {
 
 pub(crate) struct Encoder {
     context: Rc<Context>,
-    /// Taken out for the frame being encoded and put back afterwards, because
-    /// `Picture::new` takes ownership of the surface.
-    surfaces: Vec<Option<Surface<()>>>,
-    /// The driver ids, kept separately so a slot's id is known while its
-    /// surface is borrowed by the picture.
-    ids: Vec<VASurfaceID>,
-    /// Slot the next frame is uploaded into.
+    /// The BGRA path's source picture. Taken out for the frame being encoded
+    /// and put back afterwards, because `Picture::new` takes ownership of it.
+    input: Option<Surface<()>>,
+    /// Reconstructed pictures, named only in the picture parameters. They must
+    /// never be the source: radeonsi on VCN 5 replaces the buffer of the
+    /// surface named as `CurrPic` with its own DPB buffer and drops it once
+    /// unreferenced, so a source surface there is freed under the encoder.
+    reconstructed: Vec<Surface<()>>,
+    /// Slot the next frame is reconstructed into.
     next: usize,
     /// Slot holding the frame the driver may use as a reference.
     reference: Option<usize>,
@@ -155,19 +157,20 @@ impl Encoder {
                 VAEntrypoint::VAEntrypointEncSlice,
             )
             .map_err(|error| EncodeError::Unsupported(error.to_string()))?;
-        let surfaces = display
+        let mut surfaces = display
             .create_surfaces(
                 RT_FORMAT_YUV420,
                 None,
                 size.0,
                 size.1,
                 Some(UsageHint::USAGE_HINT_ENCODER),
-                vec![(); SURFACE_COUNT],
+                vec![(); SURFACE_COUNT + 1],
             )
             .map_err(|error| EncodeError::Backend(error.to_string()))?;
         let context = display
             .create_context(&config, size.0, size.1, Some(&surfaces), true)
             .map_err(|error| EncodeError::Backend(error.to_string()))?;
+        let input = surfaces.pop();
         let parameter_sets =
             openuuyc_h264::encoder::parameter_sets(openuuyc_h264::encoder::Config {
                 width: size.0,
@@ -177,9 +180,9 @@ impl Encoder {
             })
             .map_err(|error| EncodeError::Unsupported(error.to_string()))?;
         Ok(Self {
-            ids: surfaces.iter().map(Surface::id).collect(),
             context,
-            surfaces: surfaces.into_iter().map(Some).collect(),
+            input,
+            reconstructed: surfaces,
             next: 0,
             reference: None,
             width: size.0,
@@ -232,13 +235,13 @@ impl Encoder {
             self.frame_num = 0;
         }
         let index = self.next;
-        self.next = (self.next + 1) % self.surfaces.len();
+        self.next = (self.next + 1) % self.reconstructed.len();
 
         let started = std::time::Instant::now();
-        self.upload(index, pixels, pitch)?;
+        self.upload(pixels, pitch)?;
         self.upload_time += started.elapsed();
         let started = std::time::Instant::now();
-        let encoded = self.encode_surface(index, idr, timestamp)?;
+        let encoded = self.encode_input(index, idr, timestamp)?;
         self.encode_time += started.elapsed();
         self.finish_encode(index, idr, encoded, timestamp)
     }
@@ -259,7 +262,7 @@ impl Encoder {
             self.frame_num = 0;
         }
         let index = self.next;
-        self.next = (self.next + 1) % self.surfaces.len();
+        self.next = (self.next + 1) % self.reconstructed.len();
         let started = std::time::Instant::now();
         let surface = frame
             .import(self.context.display())
@@ -315,14 +318,15 @@ impl Encoder {
         )
     }
 
-    /// Converts BGRA to NV12 and copies it into the surface.
+    /// Converts BGRA to NV12 and copies it into the input surface.
     ///
     /// `vaDeriveImage` maps the surface directly, so this is the only copy of
     /// the frame; `vaCreateImage` + `vaGetImage` would read the surface back
     /// first, which is pure waste when every pixel is about to be overwritten.
-    fn upload(&mut self, index: usize, pixels: &[u8], pitch: usize) -> Result<(), EncodeError> {
+    fn upload(&mut self, pixels: &[u8], pitch: usize) -> Result<(), EncodeError> {
         let derive_started = std::time::Instant::now();
-        let surface = self.surfaces[index]
+        let surface = self
+            .input
             .as_ref()
             .ok_or_else(|| EncodeError::Backend("编码表面已借出".into()))?;
         let mut image = cros_libva::Image::derive_from(surface, (self.width, self.height))
@@ -358,18 +362,19 @@ impl Encoder {
         Ok(())
     }
 
-    /// Drives `vaBeginPicture`/`vaRenderPicture`/`vaEndPicture` for one frame.
-    fn encode_surface(
+    /// Encodes the uploaded input surface, reconstructing into slot `index`.
+    fn encode_input(
         &mut self,
         index: usize,
         idr: bool,
         timestamp: i64,
     ) -> Result<Vec<u8>, EncodeError> {
-        let surface = self.surfaces[index]
+        let surface = self
+            .input
             .take()
             .ok_or_else(|| EncodeError::Backend("编码表面已借出".into()))?;
         let (data, surface) = self.encode_picture(index, idr, timestamp, surface)?;
-        self.surfaces[index] = Some(surface);
+        self.input = Some(surface);
         Ok(data)
     }
 
@@ -479,7 +484,7 @@ impl Encoder {
         }
 
         let current = PictureH264::new(
-            self.ids[index],
+            self.reconstructed[index].id(),
             u32::from(self.frame_num),
             PICTURE_SHORT_TERM,
             i32::from(self.frame_num) * 2,
@@ -491,7 +496,7 @@ impl Encoder {
         if let Some(reference) = self.reference.filter(|_| !idr) {
             let previous = self.frame_num.wrapping_sub(1) & 0x7fff;
             references[0] = PictureH264::new(
-                self.ids[reference],
+                self.reconstructed[reference].id(),
                 u32::from(previous),
                 PICTURE_SHORT_TERM,
                 i32::from(previous) * 2,
