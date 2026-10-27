@@ -43,6 +43,7 @@ assets = [
     ["packaging/linux/openuuyc.desktop", "usr/share/applications/", "644"],
     ["assets/icon-256.png", "usr/share/icons/hicolor/256x256/apps/openuuyc.png", "644"],
     ["packaging/linux/60-openuuyc-uinput.rules", "usr/lib/udev/rules.d/", "644"],
+    ["packaging/linux/app-openuuyc.service", "usr/lib/systemd/user/", "644"],
     ["packaging/linux/openuuyc.service", "usr/lib/systemd/user/", "644"],
     ["README.md", "usr/share/doc/openuuyc/", "644"],
     ["THIRD_PARTY_NOTICES", "usr/share/doc/openuuyc/", "644"],

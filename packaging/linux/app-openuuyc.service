@@ -1,0 +1,19 @@
+# The app- prefix and name must match openuuyc.desktop so portals can persist
+# this native process's screen-sharing grant across launches.
+[Unit]
+Description=OpenUUYC 远程被控
+PartOf=graphical-session.target
+After=graphical-session.target xdg-desktop-portal.service
+ConditionFileIsExecutable=/usr/bin/OpenUUYC
+StartLimitIntervalSec=500
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/OpenUUYC gui --background
+Restart=on-failure
+RestartSec=5
+KillMode=process
+
+[Install]
+WantedBy=graphical-session.target

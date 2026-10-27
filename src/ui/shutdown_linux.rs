@@ -1,6 +1,6 @@
 //! SIGTERM/SIGINT 走和托盘「退出」同一条收尾路径。
 //!
-//! `systemctl --user stop openuuyc.service` 发的是 SIGTERM，直接死掉的话本机在线
+//! `systemctl --user stop app-openuuyc.service` 发的是 SIGTERM，直接死掉的话本机在线
 //! 状态要等服务器超时才掉，正在进行的被控会话也不会走正常收尾；`Restart=on-failure`
 //! 的单元更该看到一次干净的退出。winit 不装信号处理，事件循环也没有注册文件描述符
 //! 的接口，所以按老办法：处理函数往自建管道里写一个字节（异步信号安全），一个后台
