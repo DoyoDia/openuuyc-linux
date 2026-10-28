@@ -11,8 +11,9 @@
 //! Haswell i965, `h264_vaapi` runs about 1.4x the throughput of the software
 //! encoder at roughly a third less CPU.
 //!
-//! The driver owns the bitstream syntax. We supply the sequence and picture
-//! parameters; the driver emits SPS/PPS and slices.
+//! The driver owns the slice syntax. We supply the sequence and picture
+//! parameters and the SPS/PPS as packed headers; i965 and iHD write those
+//! into the stream, radeonsi does not (see [`include_parameter_sets`]).
 use std::rc::Rc;
 
 use cros_libva::{
@@ -447,6 +448,8 @@ impl Encoder {
             // The driver writes the slice but not the parameter sets. Submit the
             // SPS/PPS as raw packed headers, which is the only form i965 takes:
             // asking it to generate them yields "Invalid packed header data".
+            // radeonsi parses them into its slice parameters but writes them
+            // out only next to a packed slice header, which we do not send.
             buffers.push(BufferType::EncPackedHeaderParameter(
                 EncPackedHeaderParameter::new(
                     cros_libva::VAEncPackedHeaderTypeH264::VAEncPackedHeaderH264_SPS,
@@ -610,6 +613,11 @@ impl Encoder {
     }
 }
 
+/// Puts our SPS/PPS in front of an IDR that arrived without them.
+///
+/// radeonsi (Mesa 26, VCN) emits packed non-slice headers only when a packed
+/// slice header is submitted as well, so its IDRs carry no SPS. Its slices
+/// follow the packed SPS/PPS it parsed, so these are the right ones to send.
 fn include_parameter_sets(mut encoded: Vec<u8>, parameter_sets: &[u8], idr: bool) -> Vec<u8> {
     let has_sps = crate::media::video_format::annex_b_units(&encoded)
         .iter()
@@ -727,6 +735,21 @@ mod tests {
     /// The point is not the bitrate but that the driver's output parses back
     /// into the picture we handed it, and that the colour matrix is the BT.601
     /// limited range the stream's VUI declares.
+    #[test]
+    fn parameter_sets_lead_an_idr_without_them() {
+        let sets = [0, 0, 0, 1, 0x67, 1, 0, 0, 0, 1, 0x68, 2];
+        let idr = vec![0, 0, 0, 1, 0x65, 3];
+        let with_sets = include_parameter_sets(idr.clone(), &sets, true);
+        assert_eq!(with_sets, [&sets[..], &idr[..]].concat());
+        // An IDR that already has them, and a P frame, stay as they are.
+        assert_eq!(
+            include_parameter_sets(with_sets.clone(), &sets, true),
+            with_sets
+        );
+        let p = vec![0, 0, 0, 1, 0x41, 4];
+        assert_eq!(include_parameter_sets(p.clone(), &sets, false), p);
+    }
+
     #[test]
     #[ignore]
     fn vaapi_encodes_a_decodable_stream() {
