@@ -282,6 +282,7 @@ impl Encoder {
         encoded: Vec<u8>,
         timestamp: i64,
     ) -> Result<Vec<Encoded>, EncodeError> {
+        let encoded = include_parameter_sets(encoded, &self.parameter_sets, idr);
         self.reference = Some(index);
         if idr {
             self.idr_pic_id = self.idr_pic_id.wrapping_add(1);
@@ -606,6 +607,19 @@ impl Encoder {
             1,
             u32::from(self.rate.fps) * 2,
         )
+    }
+}
+
+fn include_parameter_sets(mut encoded: Vec<u8>, parameter_sets: &[u8], idr: bool) -> Vec<u8> {
+    let has_sps = crate::media::video_format::annex_b_units(&encoded)
+        .iter()
+        .any(|unit| unit.first().is_some_and(|header| header & 0x1f == 7));
+    if idr && !has_sps {
+        let mut complete = parameter_sets.to_vec();
+        complete.append(&mut encoded);
+        complete
+    } else {
+        encoded
     }
 }
 
