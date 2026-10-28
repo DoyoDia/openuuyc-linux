@@ -50,6 +50,10 @@ pub struct GuiOptions {
 pub fn run(options: GuiOptions) -> Result<()> {
     #[cfg(target_os = "linux")]
     crate::platform::linux::gamescope::prepare_wallet();
+    // Login startup enabled by an earlier version moves to the unit name the
+    // portal recognizes. It runs systemctl, so it does not hold up startup.
+    #[cfg(target_os = "linux")]
+    std::thread::spawn(crate::platform::host_service::startup::migrate);
     // The installed Windows service's user-side backend and its migration
     // recovery; Linux has no installed service.
     #[cfg(windows)]

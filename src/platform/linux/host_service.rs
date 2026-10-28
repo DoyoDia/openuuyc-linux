@@ -106,19 +106,19 @@ pub(crate) mod startup {
     use std::path::Path;
     use std::sync::OnceLock;
 
+    /// The `app-<desktop id>` name lets xdg-desktop-portal identify the host
+    /// process as `openuuyc` from its cgroup, the same as a launch from the
+    /// menu, so portal grants such as KDE's screen-sharing approval persist.
     const UNIT: &str = "app-openuuyc.service";
+    /// The name earlier versions enabled; packages now ship it as a unit that
+    /// only starts [`UNIT`], and [`migrate`] moves an enabled one over.
     const LEGACY_UNIT: &str = "openuuyc.service";
     /// systemd 的用户单元搜索路径里由发行版安装的那几处。包装的单元是权威版本，
     /// 便携运行时系统里没有，才按当前可执行文件另写一份到用户配置目录。
-    const PACKAGED_UNITS: [&str; 3] = [
-        "/usr/lib/systemd/user/app-openuuyc.service",
-        "/usr/local/lib/systemd/user/app-openuuyc.service",
-        "/etc/systemd/user/app-openuuyc.service",
-    ];
-    const LEGACY_PACKAGED_UNITS: [&str; 3] = [
-        "/usr/lib/systemd/user/openuuyc.service",
-        "/usr/local/lib/systemd/user/openuuyc.service",
-        "/etc/systemd/user/openuuyc.service",
+    const PACKAGED_DIRS: [&str; 3] = [
+        "/usr/lib/systemd/user",
+        "/usr/local/lib/systemd/user",
+        "/etc/systemd/user",
     ];
     /// 两种机制都要用户配置目录：XDG 条目写在那里，便携运行时的单元也写在那里。
     const NO_CONFIG_DIR: &str = "无法确定用户配置目录（HOME 与 XDG_CONFIG_HOME 都没有设置），写不了 systemd 用户单元，也写不了 XDG 自启动条目";
@@ -214,11 +214,29 @@ pub(crate) mod startup {
         Places::current()?.enabled(session_reachable())
     }
 
+    /// Moves login startup enabled by an earlier version from [`LEGACY_UNIT`]
+    /// to [`UNIT`]. A portable run's own legacy unit is a full copy that would
+    /// keep starting the program under the old name; the packaged one only
+    /// forwards, but is retired too.
+    pub(crate) fn migrate() {
+        let result = (|| -> Result<()> {
+            let places = Places::current()?;
+            if !session_reachable() || !places.unit_name_enabled(LEGACY_UNIT)? {
+                return Ok(());
+            }
+            let image = std::env::current_exe()?;
+            places.enable_unit(image.to_str().context("程序路径不是 UTF-8")?)
+        })();
+        if let Err(error) = result {
+            tracing::warn!(error = %format!("{error:#}"), "旧版自启动单元迁移失败");
+        }
+    }
+
     /// 自启读写的位置。测试换成临时目录，碰不到真实的用户配置与系统里的单元。
     struct Places<'a> {
         config: PathBuf,
+        /// Directories a package installs user units into.
         packaged: &'a [&'a str],
-        legacy_packaged: &'a [&'a str],
         /// 测试指向一个不存在的程序，当作没有 systemd 的系统，免得读到、甚至停用
         /// 跑测试的人自己启用的单元。
         systemctl: &'a str,
@@ -228,8 +246,7 @@ pub(crate) mod startup {
         fn current() -> Result<Self> {
             Ok(Self {
                 config: config_dir()?,
-                packaged: &PACKAGED_UNITS,
-                legacy_packaged: &LEGACY_PACKAGED_UNITS,
+                packaged: &PACKAGED_DIRS,
                 systemctl: "systemctl",
             })
         }
@@ -264,17 +281,12 @@ pub(crate) mod startup {
         }
 
         /// systemd 现在能不能看到这个单元，包装的或我们自己写的都算。
-        fn unit_installed(&self) -> bool {
-            self.unit_name_installed(UNIT) || self.unit_name_installed(LEGACY_UNIT)
-        }
-
         fn unit_name_installed(&self, name: &str) -> bool {
             self.config.join("systemd/user").join(name).exists()
-                || self.packaged.iter().any(|unit| Path::new(unit).ends_with(name))
                 || self
-                    .legacy_packaged
+                    .packaged
                     .iter()
-                    .any(|unit| Path::new(unit).ends_with(name))
+                    .any(|directory| Path::new(directory).join(name).exists())
         }
 
         fn entry(&self) -> PathBuf {
@@ -556,10 +568,10 @@ pub(crate) mod startup {
             assert_eq!(UNIT, "app-openuuyc.service");
             assert!(desktop.contains("Name=OpenUUYC"));
             assert!(compatibility.contains(
-                "ExecStart=/usr/bin/systemctl --user start app-openuuyc.service"
+                "ExecStart=/usr/bin/systemctl --user --no-block start app-openuuyc.service"
             ));
             assert!(compatibility.contains(
-                "ExecStop=/usr/bin/systemctl --user stop app-openuuyc.service"
+                "ExecStop=/usr/bin/systemctl --user --no-block stop app-openuuyc.service"
             ));
         }
 
@@ -580,7 +592,6 @@ pub(crate) mod startup {
             Places {
                 config,
                 packaged: &[],
-                legacy_packaged: &[],
                 systemctl: "/nonexistent/openuuyc-test/systemctl",
             }
         }
@@ -612,12 +623,13 @@ pub(crate) mod startup {
         fn a_packaged_unit_without_systemd_reads_as_off() {
             let mut places = scratch("packaged");
             std::fs::create_dir_all(&places.config).unwrap();
-            let packaged = places.config.join("app-openuuyc.service");
-            std::fs::write(&packaged, "").unwrap();
-            let packaged = [packaged.to_str().unwrap()];
+            let directory = places.config.to_str().unwrap().to_owned();
+            let packaged = [directory.as_str()];
             places.packaged = &packaged;
-            places.legacy_packaged = &[];
-            assert!(places.unit_installed());
+            // A package directory without the unit does not count.
+            assert!(!places.unit_name_installed(UNIT));
+            std::fs::write(places.config.join(UNIT), "").unwrap();
+            assert!(places.unit_name_installed(UNIT));
             assert!(!places.enabled(true).unwrap());
             places.enable("/usr/bin/OpenUUYC", false).unwrap();
             assert!(places.enabled(false).unwrap());
