@@ -106,13 +106,19 @@ pub(crate) mod startup {
     use std::path::Path;
     use std::sync::OnceLock;
 
-    const UNIT: &str = "openuuyc.service";
+    /// The `app-<desktop id>` name lets xdg-desktop-portal identify the host
+    /// process as `openuuyc` from its cgroup, the same as a launch from the
+    /// menu, so portal grants such as KDE's screen-sharing approval persist.
+    const UNIT: &str = "app-openuuyc.service";
+    /// The name earlier versions enabled; packages now ship it as a unit that
+    /// only starts [`UNIT`], and [`migrate`] moves an enabled one over.
+    const LEGACY_UNIT: &str = "openuuyc.service";
     /// systemd 的用户单元搜索路径里由发行版安装的那几处。包装的单元是权威版本，
     /// 便携运行时系统里没有，才按当前可执行文件另写一份到用户配置目录。
-    const PACKAGED_UNITS: [&str; 3] = [
-        "/usr/lib/systemd/user/openuuyc.service",
-        "/usr/local/lib/systemd/user/openuuyc.service",
-        "/etc/systemd/user/openuuyc.service",
+    const PACKAGED_DIRS: [&str; 3] = [
+        "/usr/lib/systemd/user",
+        "/usr/local/lib/systemd/user",
+        "/etc/systemd/user",
     ];
     /// 两种机制都要用户配置目录：XDG 条目写在那里，便携运行时的单元也写在那里。
     const NO_CONFIG_DIR: &str = "无法确定用户配置目录（HOME 与 XDG_CONFIG_HOME 都没有设置），写不了 systemd 用户单元，也写不了 XDG 自启动条目";
@@ -208,9 +214,28 @@ pub(crate) mod startup {
         Places::current()?.enabled(session_reachable())
     }
 
+    /// Moves login startup enabled by an earlier version from [`LEGACY_UNIT`]
+    /// to [`UNIT`]. A portable run's own legacy unit is a full copy that would
+    /// keep starting the program under the old name; the packaged one only
+    /// forwards, but is retired too.
+    pub(crate) fn migrate() {
+        let result = (|| -> Result<()> {
+            let places = Places::current()?;
+            if !session_reachable() || !places.unit_name_enabled(LEGACY_UNIT)? {
+                return Ok(());
+            }
+            let image = std::env::current_exe()?;
+            places.enable_unit(image.to_str().context("程序路径不是 UTF-8")?)
+        })();
+        if let Err(error) = result {
+            tracing::warn!(error = %format!("{error:#}"), "旧版自启动单元迁移失败");
+        }
+    }
+
     /// 自启读写的位置。测试换成临时目录，碰不到真实的用户配置与系统里的单元。
     struct Places<'a> {
         config: PathBuf,
+        /// Directories a package installs user units into.
         packaged: &'a [&'a str],
         /// 测试指向一个不存在的程序，当作没有 systemd 的系统，免得读到、甚至停用
         /// 跑测试的人自己启用的单元。
@@ -221,7 +246,7 @@ pub(crate) mod startup {
         fn current() -> Result<Self> {
             Ok(Self {
                 config: config_dir()?,
-                packaged: &PACKAGED_UNITS,
+                packaged: &PACKAGED_DIRS,
                 systemctl: "systemctl",
             })
         }
@@ -251,10 +276,17 @@ pub(crate) mod startup {
             self.config.join("systemd/user").join(UNIT)
         }
 
+        fn generated_legacy_unit(&self) -> PathBuf {
+            self.config.join("systemd/user").join(LEGACY_UNIT)
+        }
+
         /// systemd 现在能不能看到这个单元，包装的或我们自己写的都算。
-        fn unit_installed(&self) -> bool {
-            self.generated_unit().exists()
-                || self.packaged.iter().any(|unit| Path::new(unit).exists())
+        fn unit_name_installed(&self, name: &str) -> bool {
+            self.config.join("systemd/user").join(name).exists()
+                || self
+                    .packaged
+                    .iter()
+                    .any(|directory| Path::new(directory).join(name).exists())
         }
 
         fn entry(&self) -> PathBuf {
@@ -325,15 +357,19 @@ pub(crate) mod startup {
 
         /// 单元现在是否已启用，查的是 systemd 的实际状态。
         fn unit_enabled(&self) -> Result<bool> {
+            Ok(self.unit_name_enabled(UNIT)? || self.unit_name_enabled(LEGACY_UNIT)?)
+        }
+
+        fn unit_name_enabled(&self, name: &str) -> Result<bool> {
             // 单元没装时不必问 systemctl：v253 起 `is-enabled` 才输出 `not-found`，
             // systemd 249（Ubuntu 22.04，deb 只投这个）对不存在的单元标准输出什么都不
             // 打、只往标准错误写一行就非零退出。
-            if !self.unit_installed() {
+            if !self.unit_name_installed(name) {
                 return Ok(false);
             }
             // 包里的单元文件在、系统却没有 systemd（systemctl 不存在）时，单元不会被
             // 任何人启动，就是没启用；别让开关读成「无法读取」，旧条目也还得能关掉。
-            let Some(output) = self.run_systemctl(&["is-enabled", UNIT])? else {
+            let Some(output) = self.run_systemctl(&["is-enabled", name])? else {
                 return Ok(false);
             };
             // 未启用、被 mask 都是非零退出，状态只写在标准输出上。
@@ -359,7 +395,7 @@ pub(crate) mod startup {
             // 包装的单元已经把可执行文件位置写死成安装路径；只有在没有包装单元、或者
             // 之前那份本来就是我们自己写的时候，才按当前可执行文件重写一份，免得便携
             // 运行时换了个位置后单元指向一个已经不存在的文件。
-            if generated.exists() || !self.unit_installed() {
+            if generated.exists() || !self.unit_name_installed(UNIT) {
                 if let Some(directory) = generated.parent() {
                     std::fs::create_dir_all(directory)?;
                 }
@@ -369,19 +405,41 @@ pub(crate) mod startup {
             }
             // 这里只 enable 不 --now：正在跑的就是本进程，再起一份会被实例锁挡住。
             self.systemctl(&["enable", UNIT])?;
+            self.disable_legacy_unit()?;
             Ok(())
         }
 
         fn disable_unit(&self) -> Result<()> {
             // 没启用（包括单元不在）时不必让 systemctl 再报一次错，那就是我们要的结果。
-            if self.unit_enabled()? {
-                self.systemctl(&["disable", UNIT])?;
+            for name in [UNIT, LEGACY_UNIT] {
+                if self.unit_name_enabled(name)? {
+                    self.systemctl(&["disable", name])?;
+                }
             }
             // 只删我们自己写的那份；包装的单元归包管。
-            let generated = self.generated_unit();
-            if generated.exists() {
-                std::fs::remove_file(&generated).context("删除自启动单元失败")?;
+            let mut removed = false;
+            for generated in [self.generated_unit(), self.generated_legacy_unit()] {
+                if generated.exists() {
+                    std::fs::remove_file(&generated).context("删除自启动单元失败")?;
+                    removed = true;
+                }
+            }
+            if removed {
                 // 没有 systemd 时也就没有要重新加载的用户管理器。
+                if let Some(output) = self.run_systemctl(&["daemon-reload"])? {
+                    checked(&["daemon-reload"], &output)?;
+                }
+            }
+            Ok(())
+        }
+
+        fn disable_legacy_unit(&self) -> Result<()> {
+            if self.unit_name_enabled(LEGACY_UNIT)? {
+                self.systemctl(&["disable", LEGACY_UNIT])?;
+            }
+            let generated = self.generated_legacy_unit();
+            if generated.exists() {
+                std::fs::remove_file(&generated).context("删除旧版自启动单元失败")?;
                 if let Some(output) = self.run_systemctl(&["daemon-reload"])? {
                     checked(&["daemon-reload"], &output)?;
                 }
@@ -412,7 +470,7 @@ pub(crate) mod startup {
         )
     }
 
-    /// 单元内容。包里的 `packaging/linux/openuuyc.service` 是同一份定义，改这里时
+    /// 单元内容。包里的 `packaging/linux/app-openuuyc.service` 是同一份定义，改这里时
     /// 要一起改。
     fn unit_body(image: &str) -> String {
         let specifier = image.replace('%', "%%");
@@ -483,7 +541,7 @@ pub(crate) mod startup {
         /// 包里的单元与程序自己写的必须说同一件事：包装时用前者，便携运行时用后者。
         #[test]
         fn the_shipped_unit_agrees_with_the_generated_one() {
-            let shipped = include_str!("../../../packaging/linux/openuuyc.service");
+            let shipped = include_str!("../../../packaging/linux/app-openuuyc.service");
             let generated = unit_body("/usr/bin/OpenUUYC");
             for line in [
                 "PartOf=graphical-session.target",
@@ -501,6 +559,20 @@ pub(crate) mod startup {
                 assert!(generated.contains(line), "生成的单元缺少 {line}");
             }
             assert!(shipped.contains("ExecStart=/usr/bin/OpenUUYC gui --background"));
+        }
+
+        #[test]
+        fn portal_identity_uses_the_desktop_entry_id() {
+            let desktop = include_str!("../../../packaging/linux/openuuyc.desktop");
+            let compatibility = include_str!("../../../packaging/linux/openuuyc.service");
+            assert_eq!(UNIT, "app-openuuyc.service");
+            assert!(desktop.contains("Name=OpenUUYC"));
+            assert!(compatibility.contains(
+                "ExecStart=/usr/bin/systemctl --user --no-block start app-openuuyc.service"
+            ));
+            assert!(compatibility.contains(
+                "ExecStop=/usr/bin/systemctl --user --no-block stop app-openuuyc.service"
+            ));
         }
 
         #[test]
@@ -551,11 +623,13 @@ pub(crate) mod startup {
         fn a_packaged_unit_without_systemd_reads_as_off() {
             let mut places = scratch("packaged");
             std::fs::create_dir_all(&places.config).unwrap();
-            let packaged = places.config.join("openuuyc.service");
-            std::fs::write(&packaged, "").unwrap();
-            let packaged = [packaged.to_str().unwrap()];
+            let directory = places.config.to_str().unwrap().to_owned();
+            let packaged = [directory.as_str()];
             places.packaged = &packaged;
-            assert!(places.unit_installed());
+            // A package directory without the unit does not count.
+            assert!(!places.unit_name_installed(UNIT));
+            std::fs::write(places.config.join(UNIT), "").unwrap();
+            assert!(places.unit_name_installed(UNIT));
             assert!(!places.enabled(true).unwrap());
             places.enable("/usr/bin/OpenUUYC", false).unwrap();
             assert!(places.enabled(false).unwrap());

@@ -71,6 +71,7 @@ jobs:
           install -Dm755 install-omarchy.sh "$stage/install-omarchy.sh"
           for file in packaging/linux/openuuyc.desktop \
             packaging/linux/60-openuuyc-uinput.rules \
+            packaging/linux/app-openuuyc.service \
             packaging/linux/openuuyc.service \
             packaging/linux/openuuyc-vkms.socket \
             packaging/linux/openuuyc-vkms.service \

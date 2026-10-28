@@ -22,7 +22,7 @@ Wayland 会话下被控（让别人控制本机）需要两件事；Xorg 会话�
 「连接设置 → 启动 → 开机自启」中打开。接入 graphical-session.target 的桌面
 （GNOME、KDE、uwsm、niri 等）上它就是一个用户级单元，等价于：
 
-    systemctl --user enable openuuyc.service
+    systemctl --user enable app-openuuyc.service
 
 XFCE、MATE、Cinnamon 等桌面上它改写 ~/.config/autostart/openuuyc.desktop。
 
@@ -48,9 +48,9 @@ pre_remove() {
 OpenUUYC 已移除。以下用户数据被保留：
 
     ~/.local/share/OpenUUYC/          日志与屏幕共享授权令牌
-    ~/.config/systemd/user/           登录自启（openuuyc.service 及其 enable 符号链接）
+    ~/.config/systemd/user/           登录自启（app-openuuyc.service 与兼容单元）
     ~/.config/autostart/openuuyc.desktop  （不接 graphical-session.target 的桌面上的登录自启）
 
-需要时手动删除；先 `systemctl --user disable openuuyc.service` 再删更干净。
+需要时手动删除；先 `systemctl --user disable app-openuuyc.service openuuyc.service` 再删更干净。
 EOF
 }

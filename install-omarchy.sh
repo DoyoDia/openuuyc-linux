@@ -38,7 +38,7 @@ fi
 
 # Earlier versions of this script installed and enabled a unit of their own
 # (openuuyc-gui.service). Login startup is now the settings page's switch, which
-# enables openuuyc.service; leaving both would start two copies.
+# enables app-openuuyc.service; leaving both would start two copies.
 remove_legacy_service() {
     if [[ -e /usr/lib/systemd/user/openuuyc-gui.service ]]; then
         systemctl --user disable --now openuuyc-gui.service 2>/dev/null || true
@@ -51,10 +51,11 @@ uninstall() {
     say "移除 OpenUUYC"
     # 先关掉自启：单元文件删掉之后 systemctl 找不到它，disable 会剩下悬空的
     # graphical-session.target.wants 符号链接。
-    systemctl --user disable openuuyc.service 2>/dev/null || true
+    systemctl --user disable app-openuuyc.service openuuyc.service 2>/dev/null || true
     "${SUDO[@]}" systemctl disable --now openuuyc-vkms.socket 2>/dev/null || true
     "${SUDO[@]}" rm -f \
         "$PREFIX/bin/OpenUUYC" \
+        "$PREFIX/lib/systemd/user/app-openuuyc.service" \
         "$PREFIX/lib/systemd/user/openuuyc.service" \
         "$PREFIX/share/applications/openuuyc.desktop" \
         "$PREFIX/share/icons/hicolor/256x256/apps/openuuyc.png" \
@@ -65,7 +66,8 @@ uninstall() {
     "${SUDO[@]}" systemctl daemon-reload 2>/dev/null || true
     # 便携运行（没走这个脚本）时程序会自己写一份到用户配置目录，一并清掉。
     # 不接 graphical-session.target 的桌面上，开关写的是 XDG 自启动条目。
-    rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/openuuyc.service" \
+    rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/app-openuuyc.service" \
+        "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/openuuyc.service" \
         "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/openuuyc.desktop"
     systemctl --user daemon-reload 2>/dev/null || true
     # Only remove the menu extension if it is exactly the one we wrote; an
@@ -160,8 +162,10 @@ while IFS= read -r line; do
     ConditionFileIsExecutable=*) printf 'ConditionFileIsExecutable=%s\n' "$unit_image" ;;
     *) printf '%s\n' "$line" ;;
     esac
-done <packaging/linux/openuuyc.service >"$unit"
-"${SUDO[@]}" install -Dm644 "$unit" "$PREFIX/lib/systemd/user/openuuyc.service"
+done <packaging/linux/app-openuuyc.service >"$unit"
+"${SUDO[@]}" install -Dm644 "$unit" "$PREFIX/lib/systemd/user/app-openuuyc.service"
+"${SUDO[@]}" install -Dm644 packaging/linux/openuuyc.service \
+    "$PREFIX/lib/systemd/user/openuuyc.service"
 systemctl --user daemon-reload 2>/dev/null || true
 remove_legacy_service
 
