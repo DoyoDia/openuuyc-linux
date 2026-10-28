@@ -619,9 +619,12 @@ impl Encoder {
 /// slice header is submitted as well, so its IDRs carry no SPS. Its slices
 /// follow the packed SPS/PPS it parsed, so these are the right ones to send.
 fn include_parameter_sets(mut encoded: Vec<u8>, parameter_sets: &[u8], idr: bool) -> Vec<u8> {
-    let has_sps = crate::media::video_format::annex_b_units(&encoded)
-        .iter()
-        .any(|unit| unit.first().is_some_and(|header| header & 0x1f == 7));
+    // A start code followed by an SPS header. Emulation prevention keeps
+    // `00 00 01` out of NAL payloads. No `media::video_format` here: the GPU
+    // conversion probes include this file with a media module of their own.
+    let has_sps = encoded
+        .windows(4)
+        .any(|window| window[..3] == [0, 0, 1] && window[3] & 0x1f == 7);
     if idr && !has_sps {
         let mut complete = parameter_sets.to_vec();
         complete.append(&mut encoded);
