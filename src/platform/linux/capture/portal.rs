@@ -70,6 +70,24 @@ pub(super) fn remembered() -> bool {
         .is_ok_and(|token| !token.trim().is_empty())
 }
 
+pub(crate) fn restore_status() -> anyhow::Result<bool> {
+    let path = token_path()?;
+    match std::fs::read_to_string(path) {
+        Ok(token) => Ok(!token.trim().is_empty()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+pub(crate) fn clear_restore_token() -> anyhow::Result<()> {
+    let path = token_path()?;
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
 impl Session {
     fn start(cursor: bool) -> Result<Self> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -101,7 +119,8 @@ impl Session {
                         .set_restore_token(token.as_deref()),
                 )
                 .await?
-                .response()?;
+                .response()
+                .context("提交屏幕共享恢复授权失败")?;
             // Without a usable restore token this shows the sharing dialog on
             // this machine and waits for the local user.
             let streams = proxy
@@ -120,7 +139,19 @@ impl Session {
                 .collect::<Vec<_>>();
             let restore = streams.restore_token().map(str::to_owned);
             anyhow::Ok((proxy, session, sources, restore))
-        })?;
+        });
+        let started = match started {
+            Ok(started) => started,
+            Err(error)
+                if token.is_some()
+                    && error.to_string().contains("提交屏幕共享恢复授权失败") =>
+            {
+                tracing::warn!(%error, "saved ScreenCast restore token was rejected; requesting a fresh grant");
+                clear_restore_token()?;
+                return Self::start(cursor);
+            }
+            Err(error) => return Err(error),
+        };
         let (proxy, session, sources, restore) = started;
         if let Some(restore) = restore {
             let path = token_path()?;

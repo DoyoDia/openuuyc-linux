@@ -19,9 +19,11 @@ pub(crate) fn shared_display() -> Result<std::rc::Rc<cros_libva::Display>, Decod
     display::display_handle()
 }
 
-/// Whether the driver offers an H.264 encode entrypoint.
-pub(crate) fn encoder_available() -> bool {
-    display::supports_encode()
+/// The first VA display that exposes an H.264 encode entrypoint.
+pub(crate) fn encoder_display(
+    codec: crate::media::encoding::Codec,
+) -> Result<std::rc::Rc<cros_libva::Display>, DecodeError> {
+    display::encoder_display(codec)
 }
 
 pub(super) struct Session {

@@ -22,7 +22,9 @@ use cros_libva::{
     EncPackedHeaderParameter, EncPictureParameterBufferH264, EncSequenceParameterBufferH264,
     EncSliceParameterBufferH264, H264EncPicFields, H264EncSeqFields, H264VuiFields,
     MappedCodedBuffer, Picture, PictureH264, RcFlags, Surface, UsageHint, VAConfigAttrib,
-    VAConfigAttribType, VAEntrypoint, VAProfile,
+    VAConfigAttribType, VAEntrypoint, VAProfile, PictureHEVC, EncSequenceParameterBufferHEVC,
+    EncPictureParameterBufferHEVC, EncSliceParameterBufferHEVC, HEVCEncSeqFields,
+    HEVCEncPicFields, HevcEncPicSccFields, HevcEncVuiFields, HevcEncSliceFields,
 };
 
 use crate::media::encoding::{Encoded, Format, Rate};
@@ -107,11 +109,13 @@ pub(crate) struct Encoder {
 impl Encoder {
     /// Whether this encoder can produce `format`.
     ///
-    /// H.264 8-bit 4:2:0 only: that is what the host negotiates and what the
-    /// i965 encode entrypoint accepts.
+    /// VAAPI's packed BGRA/NV12 input path currently supports 8-bit 4:2:0.
     pub fn accepts(format: Format) -> bool {
         format.valid()
-            && format.codec == crate::media::encoding::Codec::H264
+            && matches!(
+                format.codec,
+                crate::media::encoding::Codec::H264 | crate::media::encoding::Codec::H265
+            )
             && format.chroma == 1
             && format.depth == 8
     }
@@ -132,31 +136,31 @@ impl Encoder {
                 size.0, size.1
             )));
         }
+        let profile = match format.codec {
+            crate::media::encoding::Codec::H264 => VAProfile::VAProfileH264High,
+            crate::media::encoding::Codec::H265 => VAProfile::VAProfileHEVCMain,
+            crate::media::encoding::Codec::Av1 => {
+                return Err(EncodeError::Unsupported("VA-API AV1 编码尚未实现".into()));
+            }
+        };
+        let mut attributes = vec![
+            VAConfigAttrib {
+                type_: VAConfigAttribType::VAConfigAttribRateControl,
+                value: cros_libva::VA_RC_CBR,
+            },
+            VAConfigAttrib {
+                type_: VAConfigAttribType::VAConfigAttribRTFormat,
+                value: RT_FORMAT_YUV420,
+            },
+        ];
+        if format.codec == crate::media::encoding::Codec::H264 {
+            attributes.push(VAConfigAttrib {
+                type_: VAConfigAttribType::VAConfigAttribEncPackedHeaders,
+                value: packed_headers(display)?,
+            });
+        }
         let config = display
-            .create_config(
-                vec![
-                    // Without an explicit mode i965 defaults to CQP and ignores
-                    // the congestion controller's requested bit rate.
-                    VAConfigAttrib {
-                        type_: VAConfigAttribType::VAConfigAttribRateControl,
-                        value: cros_libva::VA_RC_CBR,
-                    },
-                    VAConfigAttrib {
-                        type_: VAConfigAttribType::VAConfigAttribRTFormat,
-                        value: RT_FORMAT_YUV420,
-                    },
-                    // The driver writes SPS/PPS only if the client echoes back
-                    // the packed-header modes it advertises. Without this the
-                    // bitstream starts at the IDR slice and no decoder can pick
-                    // it up.
-                    VAConfigAttrib {
-                        type_: VAConfigAttribType::VAConfigAttribEncPackedHeaders,
-                        value: packed_headers(display)?,
-                    },
-                ],
-                VAProfile::VAProfileH264High,
-                VAEntrypoint::VAEntrypointEncSlice,
-            )
+            .create_config(attributes, profile, VAEntrypoint::VAEntrypointEncSlice)
             .map_err(|error| EncodeError::Unsupported(error.to_string()))?;
         let mut surfaces = display
             .create_surfaces(
@@ -172,14 +176,17 @@ impl Encoder {
             .create_context(&config, size.0, size.1, Some(&surfaces), true)
             .map_err(|error| EncodeError::Backend(error.to_string()))?;
         let input = surfaces.pop();
-        let parameter_sets =
+        let parameter_sets = if format.codec == crate::media::encoding::Codec::H264 {
             openuuyc_h264::encoder::parameter_sets(openuuyc_h264::encoder::Config {
                 width: size.0,
                 height: size.1,
                 fps: rate.fps,
                 bitrate: rate.target,
             })
-            .map_err(|error| EncodeError::Unsupported(error.to_string()))?;
+            .map_err(|error| EncodeError::Unsupported(error.to_string()))?
+        } else {
+            Vec::new()
+        };
         Ok(Self {
             context,
             input,
@@ -283,7 +290,11 @@ impl Encoder {
         encoded: Vec<u8>,
         timestamp: i64,
     ) -> Result<Vec<Encoded>, EncodeError> {
-        let encoded = include_parameter_sets(encoded, &self.parameter_sets, idr);
+        let encoded = if self.format.codec == crate::media::encoding::Codec::H264 {
+            include_parameter_sets(encoded, &self.parameter_sets, idr)
+        } else {
+            encoded
+        };
         self.reference = Some(index);
         if idr {
             self.idr_pic_id = self.idr_pic_id.wrapping_add(1);
@@ -442,22 +453,27 @@ impl Encoder {
         let mut buffers = Vec::new();
 
         if self.sequence_dirty {
-            buffers.push(BufferType::EncSequenceParameter(
-                cros_libva::EncSequenceParameter::H264(self.sequence_parameter()),
-            ));
-            // The driver writes the slice but not the parameter sets. Submit the
-            // SPS/PPS as raw packed headers, which is the only form i965 takes:
-            // asking it to generate them yields "Invalid packed header data".
-            // radeonsi parses them into its slice parameters but writes them
-            // out only next to a packed slice header, which we do not send.
-            buffers.push(BufferType::EncPackedHeaderParameter(
-                EncPackedHeaderParameter::new(
-                    cros_libva::VAEncPackedHeaderTypeH264::VAEncPackedHeaderH264_SPS,
-                    (self.parameter_sets.len() * 8) as u32,
-                    true,
-                ),
-            ));
-            buffers.push(BufferType::EncPackedHeaderData(self.parameter_sets.clone()));
+            match self.format.codec {
+                crate::media::encoding::Codec::H264 => {
+                    buffers.push(BufferType::EncSequenceParameter(
+                        cros_libva::EncSequenceParameter::H264(self.sequence_parameter()),
+                    ));
+                    buffers.push(BufferType::EncPackedHeaderParameter(
+                        EncPackedHeaderParameter::new(
+                            cros_libva::VAEncPackedHeaderTypeH264::VAEncPackedHeaderH264_SPS,
+                            (self.parameter_sets.len() * 8) as u32,
+                            true,
+                        ),
+                    ));
+                    buffers.push(BufferType::EncPackedHeaderData(self.parameter_sets.clone()));
+                }
+                crate::media::encoding::Codec::H265 => {
+                    buffers.push(BufferType::EncSequenceParameter(
+                        cros_libva::EncSequenceParameter::HEVC(self.sequence_parameter_hevc()),
+                    ));
+                }
+                crate::media::encoding::Codec::Av1 => unreachable!(),
+            }
             self.sequence_dirty = false;
         }
         if self.rc_dirty {
@@ -487,85 +503,236 @@ impl Encoder {
             self.rc_dirty = false;
         }
 
-        let current = PictureH264::new(
-            self.reconstructed[index].id(),
-            u32::from(self.frame_num),
-            PICTURE_SHORT_TERM,
-            i32::from(self.frame_num) * 2,
-            i32::from(self.frame_num) * 2,
-        );
-        // Every unused reference slot must be explicitly invalid; a zero id
-        // reads as "surface 0", which the driver rejects.
-        let mut references = std::array::from_fn(|_| invalid_picture());
-        if let Some(reference) = self.reference.filter(|_| !idr) {
-            let previous = self.frame_num.wrapping_sub(1) & 0x7fff;
-            references[0] = PictureH264::new(
-                self.reconstructed[reference].id(),
-                u32::from(previous),
-                PICTURE_SHORT_TERM,
-                i32::from(previous) * 2,
-                i32::from(previous) * 2,
-            );
+        match self.format.codec {
+            crate::media::encoding::Codec::H264 => {
+                let current = PictureH264::new(
+                    self.reconstructed[index].id(),
+                    u32::from(self.frame_num),
+                    PICTURE_SHORT_TERM,
+                    i32::from(self.frame_num) * 2,
+                    i32::from(self.frame_num) * 2,
+                );
+                let mut references = std::array::from_fn(|_| invalid_picture());
+                if let Some(reference) = self.reference.filter(|_| !idr) {
+                    let previous = self.frame_num.wrapping_sub(1) & 0x7fff;
+                    references[0] = PictureH264::new(
+                        self.reconstructed[reference].id(),
+                        u32::from(previous),
+                        PICTURE_SHORT_TERM,
+                        i32::from(previous) * 2,
+                        i32::from(previous) * 2,
+                    );
+                }
+                let picture_parameter = EncPictureParameterBufferH264::new(
+                    current,
+                    references,
+                    coded.id(),
+                    0,
+                    0,
+                    0,
+                    self.frame_num,
+                    INITIAL_QP,
+                    0,
+                    0,
+                    0,
+                    0,
+                    &H264EncPicFields::new(u32::from(idr), 1, 0, 0, 0, 0, 0, 1, 0, 0, 0),
+                );
+                buffers.push(BufferType::EncPictureParameter(
+                    cros_libva::EncPictureParameter::H264(picture_parameter),
+                ));
+                let slice = EncSliceParameterBufferH264::new(
+                    0,
+                    self.width.div_ceil(16) * self.height.div_ceil(16),
+                    0,
+                    if idr { 2 } else { 0 },
+                    0,
+                    self.idr_pic_id,
+                    0,
+                    0,
+                    [0, 0],
+                    1,
+                    0,
+                    0,
+                    0,
+                    std::array::from_fn(|_| invalid_picture()),
+                    std::array::from_fn(|_| invalid_picture()),
+                    0,
+                    0,
+                    0,
+                    [0; 32],
+                    [0; 32],
+                    0,
+                    [[0; 2]; 32],
+                    [[0; 2]; 32],
+                    0,
+                    [0; 32],
+                    [0; 32],
+                    0,
+                    [[0; 2]; 32],
+                    [[0; 2]; 32],
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                );
+                buffers.push(BufferType::EncSliceParameter(
+                    cros_libva::EncSliceParameter::H264(slice),
+                ));
+            }
+            crate::media::encoding::Codec::H265 => {
+                buffers.extend(self.hevc_picture_buffers(index, coded, idr));
+            }
+            crate::media::encoding::Codec::Av1 => unreachable!(),
         }
-        let picture_parameter = EncPictureParameterBufferH264::new(
+        Ok(buffers)
+    }
+
+    fn sequence_parameter_hevc(&self) -> EncSequenceParameterBufferHEVC {
+        let sequence_fields = HEVCEncSeqFields::new(1, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0);
+        let vui_fields = HevcEncVuiFields::new(0, 1, 0, 1, 0, 0, 1, 0, 16, 16);
+        EncSequenceParameterBufferHEVC::new(
+            1,
+            153,
+            0,
+            self.rate.fps.saturating_mul(2),
+            self.rate.fps.saturating_mul(2),
+            1,
+            self.rate.target,
+            self.width as u16,
+            self.height as u16,
+            &sequence_fields,
+            0,
+            3,
+            0,
+            3,
+            2,
+            2,
+            0,
+            0,
+            0,
+            0,
+            Some(vui_fields),
+            0,
+            0,
+            0,
+            1,
+            self.rate.fps.saturating_mul(2),
+            0,
+            0,
+            0,
+            &HevcEncSeqSccFields::new(0),
+        )
+    }
+
+    fn hevc_picture_buffers(
+        &self,
+        index: usize,
+        coded: &EncCodedBuffer,
+        idr: bool,
+    ) -> Vec<BufferType> {
+        let invalid = || {
+            PictureHEVC::new(
+                cros_libva::VA_INVALID_ID,
+                0,
+                cros_libva::VA_PICTURE_HEVC_INVALID,
+            )
+        };
+        let poc = i32::from(self.frame_num);
+        let current = PictureHEVC::new(self.reconstructed[index].id(), poc, 0);
+        let mut references = std::array::from_fn(|_| invalid());
+        let mut ref_list0 = std::array::from_fn(|_| invalid());
+        if let Some(reference) = self.reference.filter(|_| !idr) {
+            let previous_poc = poc.saturating_sub(1);
+            let previous = PictureHEVC::new(
+                self.reconstructed[reference].id(),
+                previous_poc,
+                cros_libva::VA_PICTURE_HEVC_RPS_ST_CURR_BEFORE,
+            );
+            references[0] = previous;
+            ref_list0[0] = previous;
+        }
+        let pic_fields = HEVCEncPicFields::new(
+            u32::from(idr),
+            if idr { 1 } else { 2 },
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            1,
+            0,
+            u32::from(idr),
+        );
+        let picture = EncPictureParameterBufferHEVC::new(
             current,
             references,
             coded.id(),
+            0xff,
             0,
-            0,
-            0,
-            self.frame_num,
             INITIAL_QP,
             0,
             0,
             0,
             0,
-            &H264EncPicFields::new(u32::from(idr), 1, 0, 0, 0, 0, 0, 1, 0, 0, 0),
+            0,
+            [0; 19],
+            [0; 21],
+            0,
+            0,
+            0,
+            0,
+            0,
+            if idr { 20 } else { 1 },
+            &pic_fields,
+            0,
+            0,
+            &HevcEncPicSccFields::new(0),
         );
-        buffers.push(BufferType::EncPictureParameter(
-            cros_libva::EncPictureParameter::H264(picture_parameter),
-        ));
-
-        let slice = EncSliceParameterBufferH264::new(
+        let slice_fields = HevcEncSliceFields::new(1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1);
+        let slice = EncSliceParameterBufferHEVC::new(
             0,
-            self.width.div_ceil(16) * self.height.div_ceil(16),
-            0,
-            if idr { 2 } else { 0 },
-            0,
-            self.idr_pic_id,
-            0,
-            0,
-            [0, 0],
-            1,
+            self.width.div_ceil(64) * self.height.div_ceil(64),
+            if idr { 2 } else { 1 },
             0,
             0,
             0,
-            std::array::from_fn(|_| invalid_picture()),
-            std::array::from_fn(|_| invalid_picture()),
+            ref_list0,
+            std::array::from_fn(|_| invalid()),
+            0,
+            0,
+            [0; 15],
+            [0; 15],
+            [[0; 2]; 15],
+            [[0; 2]; 15],
+            [0; 15],
+            [0; 15],
+            [[0; 2]; 15],
+            [[0; 2]; 15],
+            5,
             0,
             0,
             0,
-            [0; 32],
-            [0; 32],
-            0,
-            [[0; 2]; 32],
-            [[0; 2]; 32],
-            0,
-            [0; 32],
-            [0; 32],
-            0,
-            [[0; 2]; 32],
-            [[0; 2]; 32],
             0,
             0,
-            0,
+            &slice_fields,
             0,
             0,
         );
-        buffers.push(BufferType::EncSliceParameter(
-            cros_libva::EncSliceParameter::H264(slice),
-        ));
-        Ok(buffers)
+        vec![
+            BufferType::EncPictureParameter(cros_libva::EncPictureParameter::HEVC(picture)),
+            BufferType::EncSliceParameter(cros_libva::EncSliceParameter::HEVC(slice)),
+        ]
     }
 
     fn sequence_parameter(&self) -> EncSequenceParameterBufferH264 {
@@ -731,6 +898,30 @@ fn packed_headers(display: &Rc<Display>) -> Result<u32, EncodeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepts_vaapi_h264_and_hevc_420_8bit() {
+        for codec in [
+            crate::media::encoding::Codec::H264,
+            crate::media::encoding::Codec::H265,
+        ] {
+            assert!(Encoder::accepts(Format {
+                codec,
+                chroma: 1,
+                depth: 8,
+            }));
+        }
+        assert!(!Encoder::accepts(Format {
+            codec: crate::media::encoding::Codec::Av1,
+            chroma: 1,
+            depth: 8,
+        }));
+        assert!(!Encoder::accepts(Format {
+            codec: crate::media::encoding::Codec::H265,
+            chroma: 3,
+            depth: 8,
+        }));
+    }
 
     /// Needs an Intel GPU with the encode entrypoint:
     /// `cargo test -- --ignored vaapi_encodes_a_decodable_stream`.

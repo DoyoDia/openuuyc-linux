@@ -28,6 +28,8 @@ use std::time::{Duration, Instant};
 
 pub(crate) use crate::media::capture::{Screen, SourceGone};
 
+pub(crate) use portal::{clear_restore_token, restore_status};
+
 /// An X11 capture has no GPU device. The one value stands for the CPU path
 /// that capture and the software encoder share, so the loop's "same device,
 /// no transfer" test always holds.
@@ -239,11 +241,22 @@ fn usable(kinds: &[Kind], wlr_available: bool) -> Vec<Kind> {
 /// of the list the session would really use.
 pub(crate) fn needs_consent() -> bool {
     candidates().is_ok_and(|kinds| {
-        // Only a `Wlr` head can hide the portal behind it, and the probe costs
-        // a connection, so it is skipped for every other order.
         let wlr = kinds.first() == Some(&Kind::Wlr) && wlr_screencopy::available();
-        consent_needed(&usable(&kinds, wlr), portal::remembered())
+        consent_needed(&startup_candidates(&kinds, wlr), portal::remembered())
     })
+}
+
+/// Whether startup capture would have to ask the ScreenCast portal for a
+/// desktop that does not serve wlroots screencopy.
+pub(crate) fn startup_requires_portal() -> bool {
+    candidates().is_ok_and(|kinds| {
+        let wlr = kinds.first() == Some(&Kind::Wlr) && wlr_screencopy::available();
+        startup_candidates(&kinds, wlr).first() == Some(&Kind::Portal)
+    })
+}
+
+fn startup_candidates(kinds: &[Kind], wlr_available: bool) -> Vec<Kind> {
+    usable(kinds, wlr_available)
 }
 
 fn consent_needed(kinds: &[Kind], remembered: bool) -> bool {
@@ -679,7 +692,23 @@ fn scale_row(
 
 #[cfg(test)]
 mod tests {
-    use super::{Kind, consent_needed, scale, usable};
+    use super::{Kind, consent_needed, scale, startup_candidates, usable};
+
+    #[test]
+    fn startup_probe_defers_only_when_portal_is_first() {
+        assert_eq!(
+            startup_candidates(&[Kind::Wlr, Kind::Portal], false),
+            [Kind::Portal]
+        );
+        assert_eq!(
+            startup_candidates(&[Kind::Wlr, Kind::Portal], true),
+            [Kind::Wlr, Kind::Portal]
+        );
+        assert_eq!(
+            startup_candidates(&[Kind::NvFbc, Kind::X11, Kind::Portal], false),
+            [Kind::NvFbc, Kind::X11, Kind::Portal]
+        );
+    }
 
     #[test]
     fn only_an_unremembered_portal_asks_the_user() {
@@ -696,7 +725,7 @@ mod tests {
     fn a_wlr_that_cannot_open_leaves_the_portal_in_front() {
         // Neither Mutter nor KWin serves `zwlr_screencopy_manager_v1`: the
         // startup probe must not fall through to the portal and pop its
-        // dialog, which is what #1's guard exists to prevent.
+        // dialog before the user has initiated a capture.
         assert!(consent_needed(
             &usable(&[Kind::Wlr, Kind::Portal], false),
             false

@@ -1251,6 +1251,8 @@ impl DeviceCenterApp {
         self.alert(ui);
         crate::ui::controls::page_scroll("center-settings-scroll").show(ui, |ui| {
             self.startup_settings(ui);
+            #[cfg(target_os = "linux")]
+            self.wayland_authorization_settings(ui);
             self.host_settings(ui);
             self.notification_settings(ui);
             section(ui, "本机作为主控");

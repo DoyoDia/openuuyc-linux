@@ -104,7 +104,18 @@ pub fn run(options: GuiOptions) -> Result<()> {
         Box::new(move |ctx, graphics| {
             configure_visuals(ctx);
             ctx.request_repaint();
-            let mut app = DeviceCenterApp::new(ctx, local_display, options.media, display_warning);
+            let startup_failed = display_warning.is_some();
+            let background = options.background;
+            let mut app = DeviceCenterApp::new(
+                ctx,
+                local_display,
+                options.media,
+                display_warning,
+                background,
+            );
+            if background && startup_failed {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            }
             if let Some(graphics) = graphics {
                 app.diagnostics.graphics.push(graphics);
             }
@@ -181,6 +192,7 @@ struct DeviceCenterApp {
     center_ui: CenterUi,
     assist: AssistUi,
     worker: GuiWorker,
+    background: bool,
     devices: Option<DeviceList>,
     catalog: Option<catalog::Catalog>,
     catalog_error: Option<String>,
@@ -233,6 +245,7 @@ impl DeviceCenterApp {
         local_display: LocalDisplayInfo,
         media: ConnectionMediaOptions,
         display_warning: Option<String>,
+        background: bool,
     ) -> Self {
         Self {
             brand_texture: crate::ui::branding::load_texture(ctx),
@@ -241,6 +254,7 @@ impl DeviceCenterApp {
             viewers: Default::default(),
             assist: AssistUi::default(),
             worker: GuiWorker::spawn(),
+            background,
             devices: None,
             catalog: None,
             catalog_error: None,
@@ -284,6 +298,15 @@ impl DeviceCenterApp {
             login_status: String::new(),
             login_qr: None,
             login_error: None,
+        }
+    }
+
+    fn show_background_failure(&self) {
+        #[cfg(target_os = "linux")]
+        if self.background {
+            let _ = crate::ui::window_manager::send(
+                crate::ui::window_manager::Request::ShowMain,
+            );
         }
     }
 
@@ -448,12 +471,21 @@ impl DeviceCenterApp {
                 GuiEvent::Warning(message) => {
                     self.login_restore_error(&message);
                     self.refresh_pending = false;
+                    let startup_failure = message.starts_with("本机媒体能力检查失败：")
+                        || message.starts_with("后台启动失败：");
                     self.status = StatusMessage::warning(message);
+                    if startup_failure {
+                        self.show_background_failure();
+                    }
                 }
                 GuiEvent::Error(message) => {
                     self.login_restore_error(&message);
                     self.refresh_pending = false;
+                    let startup_failure = message.starts_with("无法启动 GUI 后台服务：");
                     self.status = StatusMessage::error(message);
+                    if startup_failure {
+                        self.show_background_failure();
+                    }
                 }
                 GuiEvent::HostAssistFailed { generation, error } => {
                     if generation == self.login_generation {
@@ -470,6 +502,7 @@ impl DeviceCenterApp {
                     self.login_error = Some(self.status.text.clone());
                     self.login_status = "无法恢复登录".into();
                     self.login_qr = None;
+                    self.show_background_failure();
                 }
                 GuiEvent::SignedOut => {
                     self.clear_catalog();

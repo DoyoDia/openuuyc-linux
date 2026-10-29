@@ -1,6 +1,47 @@
 use super::*;
 
 impl DeviceCenterApp {
+    #[cfg(target_os = "linux")]
+    pub(super) fn wayland_authorization_settings(&mut self, ui: &mut egui::Ui) {
+        section(ui, "Wayland 屏幕授权");
+        let status = crate::platform::linux::capture::restore_status();
+        form_row(
+            ui,
+            "本机恢复凭据",
+            "首次共享由桌面门户授权；支持持久授权时保存凭据，门户撤销后连接时会重新询问",
+            |ui| {
+                match &status {
+                    Ok(true) => {
+                        ui.label("已保存").on_hover_text(
+                            "这是本机保存的恢复凭据，桌面门户仍可能单独撤销授权。",
+                        );
+                        if ui
+                            .add(crate::ui::controls::secondary("清除授权"))
+                            .clicked()
+                        {
+                            match crate::platform::linux::capture::clear_restore_token() {
+                                Ok(()) => {
+                                    self.status = StatusMessage::success("已清除本机保存的屏幕授权");
+                                }
+                                Err(error) => {
+                                    self.status = StatusMessage::error(format!(
+                                        "清除屏幕授权失败：{error:#}"
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    Ok(false) => {
+                        ui.label("未保存授权");
+                    }
+                    Err(error) => {
+                        ui.colored_label(RED, format!("无法读取授权状态：{error:#}"));
+                    }
+                }
+            },
+        );
+    }
+
     pub(super) fn notification_settings(&mut self, ui: &mut egui::Ui) {
         section(ui, "远程访问通知");
         let mut mode = self.notifications.mode;

@@ -30,6 +30,35 @@ pub(super) fn display() -> Result<Rc<Display>, DecodeError> {
     })
 }
 
+/// Open and keep the first render node that supports H.264 encoding.
+pub(super) fn encoder_display(
+    codec: crate::media::encoding::Codec,
+) -> Result<Rc<Display>, DecodeError> {
+    thread_local! {
+        static DISPLAYS: RefCell<Vec<(crate::media::encoding::Codec, Rc<Display>)>> = const { RefCell::new(Vec::new()) };
+    }
+    DISPLAYS.with(|cell| {
+        if let Some((_, display)) = cell.borrow().iter().find(|(supported, _)| *supported == codec) {
+            return Ok(Rc::clone(display));
+        }
+        crate::platform::linux::cuda::initialize_before_va();
+        for index in 128..192u32 {
+            let path = format!("/dev/dri/renderD{index}");
+            let Some(display) = open_render_node(&path) else {
+                continue;
+            };
+            if !supports_encode_on(&display, codec) {
+                continue;
+            }
+            tracing::debug!(path, ?codec, "VA-API encode display opened");
+            log_vendor(&display);
+            cell.borrow_mut().push((codec, Rc::clone(&display)));
+            return Ok(display);
+        }
+        Err(DecodeError::Unsupported)
+    })
+}
+
 fn open_display() -> Result<Rc<Display>, DecodeError> {
     crate::platform::linux::cuda::initialize_before_va();
     // `Display::open` walks the render nodes itself; the explicit loop is the
@@ -143,15 +172,20 @@ pub(super) fn display_handle() -> Result<Rc<Display>, crate::media::decode_api::
 }
 
 /// Whether the driver offers an H.264 encode entrypoint.
-pub(super) fn supports_encode() -> bool {
-    let Ok(display) = display() else {
-        return false;
+pub(super) fn supports_encode_on(
+    display: &Display,
+    codec: crate::media::encoding::Codec,
+) -> bool {
+    let profiles: &[VAProfile::Type] = match codec {
+        crate::media::encoding::Codec::H264 => &[
+            VAProfile::VAProfileH264High,
+            VAProfile::VAProfileH264Main,
+            VAProfile::VAProfileH264ConstrainedBaseline,
+        ],
+        crate::media::encoding::Codec::H265 => &[VAProfile::VAProfileHEVCMain],
+        crate::media::encoding::Codec::Av1 => &[VAProfile::VAProfileAV1Profile0],
     };
-    [
-        VAProfile::VAProfileH264High,
-        VAProfile::VAProfileH264Main,
-        VAProfile::VAProfileH264ConstrainedBaseline,
-    ]
+    profiles
     .iter()
     .any(|profile| {
         display

@@ -1,6 +1,6 @@
 //! Linux host encoding: NVENC on the GPU driving the display when the driver
-//! offers it, then VA-API H.264 (AMD and Intel), the Rust H.264 software codec
-//! otherwise. As on Windows, hardware comes first and every candidate is proven
+//! offers it, then VA-API H.264/H.265 (AMD and Intel), the Rust H.264 software
+//! codec otherwise. As on Windows, hardware comes first and every candidate is proven
 //! on the selected desktop by encoding a frame and checking the SPS it
 //! produced; VA-API output is also decoded, see [`vaapi_backend`].
 use super::capture::{Desktop, Device, Image};
@@ -51,11 +51,16 @@ pub(crate) fn probe(
             }
         }
     }
-    // After NVENC: on a hybrid machine the default VA device is usually the
-    // integrated GPU, while NvFBC frames already sit in the NVIDIA GPU's memory.
-    let vaapi = vaapi_backend();
-    if let Some(backend) = vaapi {
-        candidates.push((backend, Format::AVC));
+    // On hybrid machines, test each VA profile on the node that actually
+    // advertises its encode entrypoint.
+    for codec in [Codec::H264, Codec::H265, Codec::Av1] {
+        let format = Format {
+            codec,
+            chroma: 1,
+            depth: 8,
+        };
+        if let Some(backend) = vaapi_backend(format) {
+            candidates.push((backend, format));
     }
     candidates.push((Backend::Software, Format::AVC));
     let rate = Rate {
@@ -90,7 +95,9 @@ pub(crate) fn probe(
                     )
                 });
                 if output.is_some() {
-                    if Some(backend) == vaapi {
+                    if matches!(backend, Backend::Amd | Backend::Intel)
+                        && format.codec == Codec::H264
+                    {
                         decodes(&encoded, size)?;
                     }
                     break;
@@ -125,22 +132,19 @@ pub(crate) fn probe(
     Ok(result)
 }
 
-/// The backend a VA-API H.264 encoder is reported as, if the driver has one.
+/// The backend a VA-API encoder is reported as, if the driver has this codec.
 ///
 /// The shared `Backend` names vendors, not APIs: the implementation code the
 /// peer sees is AMD's or Intel's, as on Windows, even though the encoder here
 /// is VA-API rather than AMF or QSV. Drivers that are neither (none known to
 /// encode) count as Intel.
-fn vaapi_backend() -> Option<Backend> {
-    if !super::vaapi_encoder::Encoder::accepts(Format::AVC) || !super::decoder::encoder_available()
-    {
+fn vaapi_backend(format: Format) -> Option<Backend> {
+    if !super::vaapi_encoder::Encoder::accepts(format) {
         return None;
     }
-    let vendor = super::decoder::shared_display()
-        .ok()?
-        .query_vendor_string()
-        .unwrap_or_default();
-    tracing::debug!(%vendor, "VA-API driver offers H.264 encoding");
+    let display = super::decoder::encoder_display(format.codec).ok()?;
+    let vendor = display.query_vendor_string().unwrap_or_default();
+    tracing::debug!(%vendor, ?format.codec, "VA-API driver offers encoding");
     let amd = ["AMD", "Radeon", "radeonsi"]
         .iter()
         .any(|name| vendor.contains(name));
@@ -236,7 +240,7 @@ impl Encoder {
                 )?))
             }
             Backend::Amd | Backend::Intel => {
-                let display = super::decoder::shared_display()
+                let display = super::decoder::encoder_display(format.codec)
                     .map_err(|error| anyhow::anyhow!("VA-API 显示不可用：{error}"))?;
                 Ok(Self::Vaapi(
                     Box::new(super::vaapi_encoder::Encoder::new(

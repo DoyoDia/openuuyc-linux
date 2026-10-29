@@ -940,9 +940,10 @@ pub(super) async fn gui_worker_loop(
                     .await
                     .unwrap_or_else(|error| Err(error.into()))
                 {
-                    let _ = events.send(GuiEvent::Warning(format!(
+                    let message = format!(
                         "本机媒体能力检查失败：{error:#}；连接时将重新检查"
-                    )));
+                    );
+                    let _ = events.send(GuiEvent::Warning(message));
                 }
                 media_ready = Some(catalog_generation);
             }

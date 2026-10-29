@@ -1,7 +1,115 @@
 //! Device access policy, account lifetime and individual connection leases.
 use super::{capture, lock, settings};
+use anyhow::Context as _;
+use sha2::Digest;
 use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[cfg(target_os = "linux")]
+struct StartupMediaCheck {
+    signature: String,
+    succeeded: bool,
+}
+
+#[cfg(target_os = "linux")]
+fn startup_media_signature(screens: &Result<Vec<capture::Screen>, String>) -> String {
+    let screens = screens.as_ref();
+    let environment = [
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "XDG_SESSION_TYPE",
+        "XDG_CURRENT_DESKTOP",
+        "XDG_SESSION_DESKTOP",
+        "OPENUUYC_CAPTURE",
+        "LIBVA_DRIVER_NAME",
+        "LIBVA_DRIVERS_PATH",
+        "MESA_LOADER_DRIVER_OVERRIDE",
+        "LD_LIBRARY_PATH",
+    ]
+    .map(|name| (name, std::env::var_os(name).map(|value| value.to_string_lossy().into_owned())));
+    let mut render_nodes = std::fs::read_dir("/dev/dri")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            name.starts_with("renderD").then(|| {
+                let device = format!("/sys/class/drm/{name}/device");
+                (
+                    name,
+                    std::fs::read_to_string(format!("{device}/vendor")).ok(),
+                    std::fs::read_to_string(format!("{device}/device")).ok(),
+                    std::fs::read_link(format!("{device}/driver")).ok(),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    render_nodes.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut va_drivers = [
+        "/usr/lib/dri",
+        "/usr/lib64/dri",
+        "/usr/lib/x86_64-linux-gnu/dri",
+        "/usr/lib/aarch64-linux-gnu/dri",
+    ]
+    .into_iter()
+    .flat_map(|directory| std::fs::read_dir(directory).into_iter().flatten().flatten())
+    .filter_map(|entry| {
+        let path = entry.path();
+        let name = path.file_name()?.to_str()?;
+        if !name.ends_with("_drv_video.so") {
+            return None;
+        }
+        let metadata = entry.metadata().ok()?;
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|elapsed| elapsed.as_secs());
+        Some((path.to_string_lossy().into_owned(), metadata.len(), modified))
+    })
+        .collect::<Vec<_>>();
+    va_drivers.sort_by(|left, right| left.0.cmp(&right.0));
+    let environment = serde_json::to_vec(&(screens, environment, render_nodes, va_drivers))
+        .unwrap_or_default();
+    format!("{:x}", sha2::Sha256::digest(environment))
+}
+
+#[cfg(target_os = "linux")]
+fn startup_media_check_path() -> anyhow::Result<std::path::PathBuf> {
+    Ok(crate::platform::paths::require_local_app_data()?.join("OpenUUYC/host-media-check.json"))
+}
+
+#[cfg(target_os = "linux")]
+fn startup_media_check(signature: &str) -> Option<bool> {
+    let check: StartupMediaCheck = serde_json::from_slice(
+        &std::fs::read(startup_media_check_path().ok()?).ok()?,
+    )
+    .ok()?;
+    (check.signature == signature).then_some(check.succeeded)
+}
+
+#[cfg(target_os = "linux")]
+fn save_startup_media_check(signature: String, succeeded: bool) {
+    let result = (|| -> anyhow::Result<()> {
+        let path = startup_media_check_path()?;
+        let parent = path.parent().context("本机数据目录没有父目录")?;
+        std::fs::create_dir_all(parent)?;
+        let temporary = path.with_extension("json.tmp");
+        std::fs::write(
+            &temporary,
+            serde_json::to_vec(&StartupMediaCheck {
+                signature,
+                succeeded,
+            })?,
+        )?;
+        std::fs::rename(temporary, path)?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        tracing::debug!(%error, "could not persist startup media check");
+    }
+}
 
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Status {
@@ -376,31 +484,75 @@ impl Handle {
             return Ok(());
         }
         tokio::task::spawn_blocking(super::displays::recovery::recover_abandoned).await??;
-        if capture::needs_consent() {
+        if capture::needs_consent() || capture::startup_requires_portal() {
             // Opening capture would ask the local user to share the screen
-            // (the ScreenCast portal before its first grant); login must not
-            // wait on that. An authorized incoming session prepares media.
+            // through the ScreenCast portal; login stays quiet until an
+            // incoming session can ask in the user's context.
             tracing::info!("host media probe deferred until an authorized incoming session");
             return Ok(());
         }
-        let screens = capture::screens()?;
-        let Some(screen) = screens
-            .iter()
-            .find(|s| s.primary)
-            .or(screens.first())
-            .cloned()
-        else {
-            return Ok(());
-        };
-        let owner = self.clone();
-        self.media
-            .prepare(
-                screen,
-                self.encoding_settings().gpu_compatibility,
-                move || !cancel.is_cancelled() && lock(&owner.ownership).active,
-            )
-            .await?;
-        Ok(())
+        #[cfg(target_os = "linux")]
+        {
+            let screens = capture::screens().map_err(|error| format!("{error:#}"));
+            let signature = startup_media_signature(&screens);
+            if let Some(previous_success) = startup_media_check(&signature) {
+                tracing::debug!(
+                    previous_success,
+                    "startup media check skipped; environment is unchanged"
+                );
+                return Ok(());
+            }
+            let screens = match screens {
+                Ok(screens) => screens,
+                Err(error) => {
+                    save_startup_media_check(signature, false);
+                    return Err(anyhow::Error::msg(error));
+                }
+            };
+            let Some(screen) = screens
+                .iter()
+                .find(|screen| screen.primary)
+                .or(screens.first())
+                .cloned()
+            else {
+                save_startup_media_check(signature, false);
+                return Ok(());
+            };
+            let owner = self.clone();
+            let result = self
+                .media
+                .prepare(
+                    screen,
+                    self.encoding_settings().gpu_compatibility,
+                    move || !cancel.is_cancelled() && lock(&owner.ownership).active,
+                )
+                .await;
+            if cancel.is_cancelled() {
+                return Ok(());
+            }
+            save_startup_media_check(signature, result.is_ok());
+            result
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let screens = capture::screens()?;
+            let Some(screen) = screens
+                .iter()
+                .find(|screen| screen.primary)
+                .or(screens.first())
+                .cloned()
+            else {
+                return Ok(());
+            };
+            let owner = self.clone();
+            self.media
+                .prepare(
+                    screen,
+                    self.encoding_settings().gpu_compatibility,
+                    move || !cancel.is_cancelled() && lock(&owner.ownership).active,
+                )
+                .await
+        }
     }
     pub(crate) async fn invalidate_media(&self) {
         self.media.invalidate().await;
