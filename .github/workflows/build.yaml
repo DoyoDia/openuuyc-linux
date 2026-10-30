@@ -8,13 +8,14 @@ permissions:
   contents: write
 
 jobs:
-  getversion:
+  dpkg:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
     outputs:
       tag: ${{ steps.version.outputs.tag }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@main
+      - uses: actions/checkout@main
         with:
           fetch-depth: 0
 
@@ -23,100 +24,8 @@ jobs:
         shell: bash
         run: |
           version=$(sed -n '/^\[package\]/,/^\[/ { s/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p; }' Cargo.toml)
-          test -n "$version" || exit 1
+          test -n "$version"
           echo "tag=v${version}" >> "$GITHUB_OUTPUT"
-
-  arch:
-    needs: getversion
-    runs-on: ubuntu-latest
-    container: archlinux:latest
-    steps:
-      - name: Install dependencies
-        shell: bash
-        run: |
-          pacman -Syu --noconfirm --needed \
-            archlinux-keyring base-devel git pkg-config cmake clang nasm rust \
-            libva libx11 libxcb libxrandr libxi libxcursor libxfixes \
-            libxkbcommon libxkbcommon-x11 wayland libglvnd vulkan-icd-loader \
-            dbus alsa-lib openssl fuse3
-
-      - name: Checkout
-        uses: actions/checkout@main
-        with:
-          fetch-depth: 0
-
-      - name: Build
-        shell: bash
-        run: |
-          cargo build --release --locked --bin openuuyc
-          cd crates/vkms && CARGO_TARGET_DIR=../../target cargo build --release --locked
-
-      - name: Assemble the release archive
-        shell: bash
-        run: |
-          set -eu
-          stage="openuuyc-${{ needs.getversion.outputs.tag }}-x86_64-linux"
-          mkdir -p "$stage"
-          # Keep the package/ layout in the release archive.
-          install -Dm755 target/release/openuuyc "$stage/openuuyc"
-          install -Dm755 target/release/openuuyc-vkms "$stage/openuuyc-vkms"
-          install -Dm755 package/omarchy/install-omarchy.sh "$stage/package/omarchy/install-omarchy.sh"
-          for file in package/linux/openuuyc.desktop \
-            package/linux/60-openuuyc-uinput.rules \
-            package/linux/app-openuuyc.service \
-            package/linux/openuuyc.service \
-            package/linux/openuuyc-vkms.socket \
-            package/linux/openuuyc-vkms.service \
-            package/omarchy/omarchy-menu.jsonc assets/icon-256.png \
-            LICENSE NOTICES.md; do
-            install -Dm644 "$file" "$stage/$file"
-          done
-          tar --zstd -cf "$stage.tar.zst" "$stage"
-          install -Dm755 target/release/openuuyc openuuyc
-          ls -lh "$stage.tar.zst" openuuyc
-
-      - name: Build the pacman package from the local archive
-        shell: bash
-        run: |
-          set -euo pipefail
-          stage="openuuyc-${{ needs.getversion.outputs.tag }}-x86_64-linux"
-          mkdir -p /tmp/pacman-package
-          cp package/arch/{PKGBUILD,openuuyc.install} /tmp/pacman-package/
-          # Reuse the package layout, but package this run's prebuilt archive.
-          sed -i 's|target/release/||g; s|cd "$pkgname"|cd "$_dir"|g' /tmp/pacman-package/PKGBUILD
-          cp "$stage.tar.zst" /tmp/pacman-package/
-          # Override the release download: package the binaries built by this run.
-          pkgver="${{ needs.getversion.outputs.tag }}"
-          pkgrel=1
-          sed -i \
-            -e "s|@PKGVER@|$pkgver|g" \
-            -e "s|@PKGREL@|$pkgrel|g" \
-            /tmp/pacman-package/PKGBUILD
-          printf '\n_dir=%q\nsource=(%q)\nsha256sums=(SKIP)\nprepare() { :; }\nbuild() { :; }\n' \
-            "$stage" "$stage.tar.zst" \
-            >> /tmp/pacman-package/PKGBUILD
-          useradd --create-home builder
-          chown -R builder:builder /tmp/pacman-package
-          runuser -u builder -- bash -c 'cd /tmp/pacman-package && makepkg --nodeps --noconfirm'
-          mkdir -p dist
-          cp /tmp/pacman-package/*.pkg.tar.zst dist/
-          pacman -Qip dist/*.pkg.tar.zst
-
-      - name: Upload the pacman package
-        uses: actions/upload-artifact@main
-        with:
-          name: release_pacman
-          path: dist/*
-
-  deb:
-    needs: getversion
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-    steps:
-      - uses: actions/checkout@main
-        with:
-          fetch-depth: 0
 
       - name: Install build dependencies
         run: |
@@ -156,40 +65,125 @@ jobs:
         shell: bash
         run: cargo deb --no-build
 
-      - name: Check the package installs
+      - name: Collect release binaries and deb package
         shell: bash
         run: |
-          sudo apt-get install -y ./target/debian/*.deb
-          openuuyc --version
-          dpkg-deb --info target/debian/*.deb
+          set -euo pipefail
+          mkdir -p dist
+          install -Dm755 target/release/openuuyc dist/openuuyc
+          install -Dm755 target/release/openuuyc-vkms dist/openuuyc-vkms
+          cp target/debian/*.deb dist/
 
-      - name: Upload the deb package
+      - name: Upload the deb package and binaries
         uses: actions/upload-artifact@main
         with:
           name: release_dpkg
-          path: target/debian/*.deb
+          path: dist/*
+          if-no-files-found: error
 
-  release:
-    needs: [getversion, arch, deb]
+  pacman:
+    needs: dpkg
     runs-on: ubuntu-latest
+    container: archlinux:latest
+    env:
+      RELEASE_TAG: ${{ needs.dpkg.outputs.tag }}
     steps:
-      - uses: actions/download-artifact@main
+      - name: Install dependencies
+        shell: bash
+        run: |
+          pacman -Syu --noconfirm --needed \
+            archlinux-keyring base-devel git zstd
+
+      - name: Checkout packaging files
+        uses: actions/checkout@main
+
+      - name: Download the deb package and binaries
+        uses: actions/download-artifact@main
         with:
-          pattern: release-*
-          merge-multiple: true
+          name: release_dpkg
           path: dist
+
+      - name: Assemble the release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          stage="openuuyc-${version}-x86_64-linux"
+          mkdir -p "$stage"
+          # Artifact downloads do not preserve executable permissions.
+          chmod +x dist/openuuyc dist/openuuyc-vkms
+          # Keep the package/ layout in the release archive.
+          install -Dm755 dist/openuuyc "$stage/openuuyc"
+          install -Dm755 dist/openuuyc-vkms "$stage/openuuyc-vkms"
+          install -Dm755 package/omarchy/install-omarchy.sh "$stage/package/omarchy/install-omarchy.sh"
+          for file in package/linux/openuuyc.desktop \
+            package/linux/60-openuuyc-uinput.rules \
+            package/linux/app-openuuyc.service \
+            package/linux/openuuyc.service \
+            package/linux/openuuyc-vkms.socket \
+            package/linux/openuuyc-vkms.service \
+            package/omarchy/omarchy-menu.jsonc assets/icon-256.png \
+            LICENSE NOTICES.md; do
+            install -Dm644 "$file" "$stage/$file"
+          done
+          tar --zstd -cf "dist/$stage.tar.zst" "$stage"
+          ls -lh "dist/$stage.tar.zst" dist/openuuyc dist/openuuyc-vkms
+
+      - name: Build the pacman package from the local archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          stage="openuuyc-${version}-x86_64-linux"
+          mkdir -p /tmp/pacman-package
+          cp package/arch/{PKGBUILD,openuuyc.install} /tmp/pacman-package/
+          # Reuse the package layout, but package this run's prebuilt archive.
+          sed -i 's|target/release/||g; s|cd "$pkgname"|cd "$_dir"|g' /tmp/pacman-package/PKGBUILD
+          cp "dist/$stage.tar.zst" /tmp/pacman-package/
+          # Override the release download: package the binaries built by this run.
+          # Arch pkgver forbids hyphens; keep the original version in archive names.
+          pkgver="${version//-/_}"
+          if [[ -z "$pkgver" || "$pkgver" =~ [:/[:space:]-] ]]; then
+            printf 'Invalid Arch pkgver derived from release tag: %s\n' "$RELEASE_TAG" >&2
+            exit 1
+          fi
+          printf 'Release tag: %s; Arch pkgver: %s\n' "$RELEASE_TAG" "$pkgver"
+          pkgrel=1
+          sed -i \
+            -e "s|@PKGVER@|$pkgver|g" \
+            -e "s|@PKGREL@|$pkgrel|g" \
+            /tmp/pacman-package/PKGBUILD
+          printf '\n_dir=%q\nsource=(%q)\nsha256sums=(SKIP)\nprepare() { :; }\nbuild() { :; }\n' \
+            "$stage" "$stage.tar.zst" \
+            >> /tmp/pacman-package/PKGBUILD
+          useradd --create-home builder
+          chown -R builder:builder /tmp/pacman-package
+          runuser -u builder -- bash -c 'cd /tmp/pacman-package && makepkg --nodeps --noconfirm'
+          mkdir -p dist
+          cp /tmp/pacman-package/*.pkg.tar.zst dist/
+          pacman -Qip dist/*.pkg.tar.zst
+
+      - name: Upload the pacman package and release archive
+        uses: actions/upload-artifact@main
+        with:
+          name: release_pacman
+          path: |
+            dist/*.pkg.tar.zst
+            dist/openuuyc-*-x86_64-linux.tar.zst
+          if-no-files-found: error
 
       - name: Release
         uses: softprops/action-gh-release@master
         with:
-          tag_name: ${{ needs.getversion.outputs.tag }}
+          fail_on_unmatched_files: true
+          tag_name: ${{ needs.dpkg.outputs.tag }}
           files: |
             dist/*.pkg.tar.zst
             dist/*.deb
-            dist/*.tar.zst
+            dist/openuuyc-*-x86_64-linux.tar.zst
             dist/openuuyc
             dist/openuuyc-vkms
           body: |
-            ## Release ${{ needs.getversion.outputs.tag }}
+            ## Release ${{ needs.dpkg.outputs.tag }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
