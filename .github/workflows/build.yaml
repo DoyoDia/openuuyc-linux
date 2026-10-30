@@ -112,6 +112,7 @@ jobs:
           path: dist/*
 
   deb:
+    needs: getversion
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
