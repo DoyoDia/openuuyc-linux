@@ -50,7 +50,6 @@ jobs:
         run: |
           cargo build --release --locked --bin openuuyc
           cd crates/vkms && CARGO_TARGET_DIR=../../target cargo build --release --locked
-          target/release/openuuyc --version
 
       - name: Assemble the release archive
         shell: bash
@@ -145,7 +144,6 @@ jobs:
         run: |
           cargo build --release --locked --bin openuuyc
           cd crates/vkms && CARGO_TARGET_DIR=../../target cargo build --release --locked
-          target/release/openuuyc --version
 
       - name: Check the developer probes still build
         shell: bash
