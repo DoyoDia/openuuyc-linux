@@ -61,6 +61,7 @@ pub(crate) fn probe(
         };
         if let Some(backend) = vaapi_backend(format) {
             candidates.push((backend, format));
+        }
     }
     candidates.push((Backend::Software, Format::AVC));
     let rate = Rate {
