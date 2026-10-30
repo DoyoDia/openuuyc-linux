@@ -81,7 +81,7 @@ jobs:
           path: compiled-binaries.tar
           if-no-files-found: error
 
-  arch:
+  pacman:
     needs: [getversion, build]
     env:
       RELEASE_TAG: ${{ needs.getversion.outputs.tag }}
@@ -173,7 +173,7 @@ jobs:
           name: release-pacman
           path: dist/*
 
-  deb:
+  dpkg:
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -230,7 +230,7 @@ jobs:
           path: target/debian/*.deb
 
   release:
-    needs: [getversion, arch, deb]
+    needs: [getversion, pacman, dpkg]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@main
