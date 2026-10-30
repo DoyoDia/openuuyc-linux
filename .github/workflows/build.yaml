@@ -55,8 +55,7 @@ jobs:
         shell: bash
         run: |
           set -eu
-          version="${RELEASE_TAG#v}"
-          stage="openuuyc-${version}-x86_64-linux"
+          stage="openuuyc-${{ needs.getversion.outputs.tag }}-x86_64-linux"
           mkdir -p "$stage"
           # Keep the package/ layout in the release archive.
           install -Dm755 target/release/openuuyc "$stage/openuuyc"
@@ -80,15 +79,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${RELEASE_TAG#v}"
-          stage="openuuyc-${version}-x86_64-linux"
+          stage="openuuyc-${{ needs.getversion.outputs.tag }}-x86_64-linux"
           mkdir -p /tmp/pacman-package
           cp package/arch/{PKGBUILD,openuuyc.install} /tmp/pacman-package/
           # Reuse the package layout, but package this run's prebuilt archive.
           sed -i 's|target/release/||g; s|cd "$pkgname"|cd "$_dir"|g' /tmp/pacman-package/PKGBUILD
           cp "$stage.tar.zst" /tmp/pacman-package/
           # Override the release download: package the binaries built by this run.
-          pkgver="${version//-/_}"
+          pkgver="${{ needs.getversion.outputs.tag }}"
           pkgrel=1
           sed -i \
             -e "s|@PKGVER@|$pkgver|g" \
