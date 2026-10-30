@@ -141,14 +141,16 @@ jobs:
           sed -i 's|target/release/||g; s|cd "$pkgname"|cd "$_dir"|g' /tmp/pacman-package/PKGBUILD
           cp "dist/$stage.tar.zst" /tmp/pacman-package/
           # Override the release download: package the binaries built by this run.
-          # Arch pkgver forbids hyphens; keep the original version in archive names.
-          pkgver="${version//-/_}"
-          if [[ -z "$pkgver" || "$pkgver" =~ [:/[:space:]-] ]]; then
-            printf 'Invalid Arch pkgver derived from release tag: %s\n' "$RELEASE_TAG" >&2
+          # Keep Cargo's SemVer unchanged; split the version only for Arch.
+          # 1.0.2-beta.6 -> pkgver=1.0.2, pkgrel=6; stable releases default to 1.
+          pkgver=$(printf '%s\n' "$version" | sed -nE 's/^([0-9]+\.[0-9]+\.[0-9]+)(-[[:alpha:]]+\.[0-9]+)?$/\1/p')
+          pkgrel=$(printf '%s\n' "$version" | sed -nE 's/^[0-9]+\.[0-9]+\.[0-9]+-[[:alpha:]]+\.([0-9]+)$/\1/p')
+          pkgrel="${pkgrel:-1}"
+          if [[ -z "$pkgver" || ! "$pkgrel" =~ ^[1-9][0-9]*$ ]]; then
+            printf 'Cannot derive Arch package version from release tag: %s\n' "$RELEASE_TAG" >&2
             exit 1
           fi
-          printf 'Release tag: %s; Arch pkgver: %s\n' "$RELEASE_TAG" "$pkgver"
-          pkgrel=1
+          printf 'Release tag: %s; Arch pkgver: %s; pkgrel: %s\n' "$RELEASE_TAG" "$pkgver" "$pkgrel"
           sed -i \
             -e "s|@PKGVER@|$pkgver|g" \
             -e "s|@PKGREL@|$pkgrel|g" \

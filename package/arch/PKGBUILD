@@ -2,8 +2,8 @@
 #
 # Source package tracking the Linux port's branch (DoyoDia/openuuyc-linux linux-port).
 # Builds from source; expect 20-40 minutes and ~4 GB of RAM on first build.
-# Template: build.yaml replaces @PKGVER@ from Cargo.toml (hyphens become
-# underscores) and @PKGREL@ with the package revision before invoking makepkg.
+# Template: build.yaml splits the Cargo version before invoking makepkg:
+# 1.0.2-beta.6 becomes @PKGVER@=1.0.2 and @PKGREL@=6 (stable defaults to 1).
 
 pkgname=openuuyc
 _pkgname=openuuyc
