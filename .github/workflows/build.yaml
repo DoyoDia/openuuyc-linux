@@ -7,6 +7,10 @@ on:
 permissions:
   contents: write
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   getversion:
     runs-on: ubuntu-latest
@@ -26,36 +30,92 @@ jobs:
           test -n "$version" || exit 1
           echo "tag=v${version}" >> "$GITHUB_OUTPUT"
 
-  arch:
+  build:
     needs: getversion
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake clang nasm pkg-config dpkg-dev libva-dev \
+            libasound2-dev libdbus-1-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libx11-dev libxcb1-dev libxrandr-dev libxi-dev \
+            libxcursor-dev libgl1-mesa-dev libvulkan-dev libudev-dev libssl-dev
+
+      - name: Get Rust Toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - name: Build both binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --bin openuuyc
+          (cd crates/vkms && CARGO_TARGET_DIR=../../target cargo build --release --locked)
+          ./target/release/openuuyc --version
+
+      - name: Check the developer probes still build
+        shell: bash
+        run: |
+          cargo check --locked --bins \
+            --manifest-path devtools/probes/gpu-conversion/Cargo.toml \
+            --target-dir target/probes
+          gcc -fsyntax-only -Wall devtools/probes/vaapi_export_probe.c
+          gcc -fsyntax-only -Wall devtools/probes/vulkan_dmabuf_probe.c
+
+      - name: Bundle compiled binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C target/release -cf compiled-binaries.tar openuuyc openuuyc-vkms
+
+      - name: Upload compiled binaries
+        uses: actions/upload-artifact@main
+        with:
+          name: compiled-binaries-x86_64
+          path: compiled-binaries.tar
+          if-no-files-found: error
+
+  arch:
+    needs: [getversion, build]
+    env:
+      RELEASE_TAG: ${{ needs.getversion.outputs.tag }}
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
-      - name: Install dependencies
+      - name: Install packaging dependencies
         shell: bash
         run: |
-          pacman -Syu --noconfirm --needed \
-            archlinux-keyring base-devel git pkg-config cmake clang nasm rust \
-            libva libx11 libxcb libxrandr libxi libxcursor libxfixes \
-            libxkbcommon libxkbcommon-x11 wayland libglvnd vulkan-icd-loader \
-            dbus alsa-lib openssl fuse3
+          set -euo pipefail
+          pacman -Syu --noconfirm --needed archlinux-keyring base-devel git
 
       - name: Checkout
         uses: actions/checkout@main
         with:
           fetch-depth: 0
 
-      - name: Build
+      - name: Download compiled binaries
+        uses: actions/download-artifact@main
+        with:
+          name: compiled-binaries-x86_64
+          path: artifacts
+
+      - name: Extract compiled binaries
         shell: bash
         run: |
-          cargo build --release --locked --bin openuuyc
-          cd crates/vkms && CARGO_TARGET_DIR=../../target cargo build --release --locked
-          target/release/openuuyc --version
+          set -euo pipefail
+          mkdir -p target/release
+          tar -xf artifacts/compiled-binaries.tar -C target/release
 
       - name: Assemble the release archive
         shell: bash
         run: |
-          set -eu
+          set -euo pipefail
           version="${RELEASE_TAG#v}"
           stage="openuuyc-${version}-x86_64-linux"
           mkdir -p "$stage"
@@ -74,8 +134,10 @@ jobs:
             install -Dm644 "$file" "$stage/$file"
           done
           tar --zstd -cf "$stage.tar.zst" "$stage"
-          install -Dm755 target/release/openuuyc openuuyc
-          ls -lh "$stage.tar.zst" openuuyc
+          mkdir -p dist
+          cp "$stage.tar.zst" dist/
+          install -Dm755 target/release/openuuyc dist/openuuyc
+          install -Dm755 target/release/openuuyc-vkms dist/openuuyc-vkms
 
       - name: Build the pacman package from the local archive
         shell: bash
@@ -108,18 +170,15 @@ jobs:
       - name: Upload the pacman package
         uses: actions/upload-artifact@main
         with:
-          name: release_pacman
+          name: release-pacman
           path: dist/*
 
   deb:
-    needs: getversion
+    needs: build
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
     steps:
-      - uses: actions/checkout@main
-        with:
-          fetch-depth: 0
+      - name: Checkout
+        uses: actions/checkout@main
 
       - name: Install build dependencies
         run: |
@@ -140,21 +199,18 @@ jobs:
         with:
           tool: cargo-deb
 
-      - name: Build
-        shell: bash
-        run: |
-          cargo build --release --locked --bin openuuyc
-          cd crates/vkms && CARGO_TARGET_DIR=../../target cargo build --release --locked
-          target/release/openuuyc --version
+      - name: Download compiled binaries
+        uses: actions/download-artifact@main
+        with:
+          name: compiled-binaries-x86_64
+          path: artifacts
 
-      - name: Check the developer probes still build
+      - name: Extract compiled binaries
         shell: bash
         run: |
-          cargo check --locked --bins \
-            --manifest-path devtools/probes/gpu-conversion/Cargo.toml \
-            --target-dir target/probes
-          gcc -fsyntax-only -Wall devtools/probes/vaapi_export_probe.c
-          gcc -fsyntax-only -Wall devtools/probes/vulkan_dmabuf_probe.c
+          set -euo pipefail
+          mkdir -p target/release
+          tar -xf artifacts/compiled-binaries.tar -C target/release
 
       - name: Package to deb
         shell: bash
@@ -170,7 +226,7 @@ jobs:
       - name: Upload the deb package
         uses: actions/upload-artifact@main
         with:
-          name: release_dpkg
+          name: release-deb
           path: target/debian/*.deb
 
   release:
