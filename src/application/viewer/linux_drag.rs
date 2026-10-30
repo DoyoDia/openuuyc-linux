@@ -212,7 +212,7 @@ impl WindowDrag {
             return;
         }
         ctx.request_repaint_after(Duration::from_millis(100));
-        egui::Area::new(egui::Id::new("native-file-drag"))
+        egui::Area::new(egui::Id::unique("native-file-drag"))
             .anchor(egui::Align2::CENTER_BOTTOM, [0., -18.])
             .order(egui::Order::Foreground)
             // A passive drag hint must not become a forbidden drop target and

@@ -87,7 +87,7 @@ package() {
     install -Dm644 packaging/linux/openuuyc-vkms.service \
         "$pkgdir/usr/lib/systemd/system/openuuyc-vkms.service"
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-    install -Dm644 THIRD_PARTY_NOTICES \
-        "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY_NOTICES"
-    cp -r assets/licenses "$pkgdir/usr/share/licenses/$pkgname/licenses"
+    install -Dm644 NOTICES.md \
+        "$pkgdir/usr/share/licenses/$pkgname/NOTICES.md"
+
 }

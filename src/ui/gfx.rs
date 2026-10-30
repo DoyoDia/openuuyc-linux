@@ -5,8 +5,7 @@ use winit::dpi::PhysicalSize;
 
 // The platform layer owns the presenter and its device; the shell only needs
 // their names.
-#[cfg(windows)]
-pub(crate) use crate::platform::graphics::window_hwnd;
+
 #[allow(
     unused_imports,
     reason = "The platform-neutral names of the presenter types; not every caller spells them out."

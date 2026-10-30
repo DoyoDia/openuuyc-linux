@@ -1,4 +1,7 @@
-//! OpenUUYC: UU protocol interoperability and Windows application composition.
+//! OpenUUYC: UU protocol interoperability and Linux application composition.
+
+#[cfg(not(target_os = "linux"))]
+compile_error!("OpenUUYC Linux only supports Linux targets");
 
 pub const APP_NAME: &str = "OpenUUYC";
 pub(crate) const VIEWER_TITLE_PREFIX: &str = "OpenUUYC — ";

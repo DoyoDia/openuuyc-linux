@@ -1,7 +1,7 @@
 # Maintainer: risent <shengqi542@gmail.com>
 #
 # Binary package built from a GitHub release of the Linux port
-# (DoyoDia/openuuyc-linux), which linux-release.yml publishes for every v* tag.
+# (DoyoDia/openuuyc-linux), which build-pacman.yml publishes for every v* tag.
 # Prefer this over openuuyc-git unless you want to track the branch.
 #
 # AUR submission: copy this directory to an AUR git checkout and run
@@ -43,7 +43,7 @@ conflicts=('openuuyc' 'openuuyc-git')
 # The binary is built with debuginfo stripped and there is nothing to split.
 options=('!debug')
 install=openuuyc-bin.install
-# The release archive mirrors the repository layout (see linux-release.yml),
+# The release archive mirrors the repository layout (see build-pacman.yml),
 # so one versioned download carries both binaries, the desktop files, the
 # systemd units and every license text, and makepkg's source cache never
 # mixes versions.
@@ -74,7 +74,7 @@ package() {
     install -Dm644 packaging/linux/openuuyc-vkms.service \
         "$pkgdir/usr/lib/systemd/system/openuuyc-vkms.service"
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-    install -Dm644 THIRD_PARTY_NOTICES \
-        "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY_NOTICES"
-    cp -r assets/licenses "$pkgdir/usr/share/licenses/$pkgname/licenses"
+    install -Dm644 NOTICES.md \
+        "$pkgdir/usr/share/licenses/$pkgname/NOTICES.md"
+
 }

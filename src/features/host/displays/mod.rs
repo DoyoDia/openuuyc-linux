@@ -15,7 +15,7 @@ use crate::platform::display::{
 };
 // 合成器那条路和 `topology::identity` / `output_name` 一样只在 Linux 上有：
 // Windows 的输出是驱动管的，不需要（也没有）这层。
-#[cfg(not(windows))]
+
 use crate::platform::display::{compositor, topology};
 use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
@@ -81,7 +81,7 @@ impl Drop for Heartbeat {
 /// 虚拟屏在 Linux 上不是「驱动里的一块显示器」，而是「一路 VKMS 连接器 + 合成器
 /// 认下它」，所以刷新率由我们自己定；和 Windows 那条路（写死 144）保持一致，好让
 /// 主控协商出来的码率在两边含义相同。
-#[cfg(not(windows))]
+
 const VIRTUAL_HZ: u32 = 144;
 
 struct State {
@@ -96,7 +96,6 @@ struct State {
     dirty: bool,
     restoring: bool,
     /// Linux 上的虚拟屏：一条到 root 辅助程序的连接，连接在，租约就在。
-    #[cfg(not(windows))]
     virtual_display: Option<crate::platform::virtual_display::Session>,
 }
 pub(crate) struct Session {
@@ -116,7 +115,7 @@ impl Session {
         let preference_path = (!lease.is_assistance() && !remote.is_empty()).then(|| {
             root.join("preferences")
                 .join(lease.display_scope())
-                .join(format!("{:x}.json", Sha256::digest(remote)))
+                .join(format!("{}.json", hex::encode(Sha256::digest(remote))))
         });
         let preferences = preference_path
             .as_deref()
@@ -156,7 +155,7 @@ impl Session {
                 render_adapter: None,
                 dirty: false,
                 restoring: false,
-                #[cfg(not(windows))]
+
                 virtual_display: None,
             })),
         }))
@@ -200,7 +199,7 @@ impl Session {
         let state = lock(&self.state);
         // Linux 的拓扑分不出虚拟屏，兜底屏要靠进程里记着的 identity 认：认出来
         // 之后按 Windows 那套语义报成虚拟屏（kind 1），共享逻辑才走得到同一条路。
-        #[cfg(not(windows))]
+
         if let Some(fallback) = fallback::identity()
             && screen.identity.as_deref() == Some(fallback.as_str())
             && let Some(target) = target.as_mut()
@@ -275,7 +274,7 @@ impl Session {
     /// Linux：虚拟屏由 root 辅助程序接一路 VKMS 连接器出来，分辨率交给合成器定。
     /// Windows 那套 RandR/驱动模型在这里没有对应的东西，所以整条路分开写，而不是
     /// 在中间塞条件分支。
-    #[cfg(not(windows))]
+
     pub(crate) async fn create(&self, resolutions: Vec<(u32, u32)>) -> Result<capture::Screen> {
         ensure!(
             self.lease.display_expansion_allowed(),
@@ -324,55 +323,8 @@ impl Session {
         .await
     }
 
-    #[cfg(windows)]
-    pub(crate) async fn create(&self, resolutions: Vec<(u32, u32)>) -> Result<capture::Screen> {
-        ensure!(
-            self.lease.display_expansion_allowed(),
-            "本次会话不允许添加虚拟屏"
-        );
-        self.run(move |state, lease| {
-            ensure!(
-                state.journal.super_baseline.is_none(),
-                "超级屏内不能添加扩展屏"
-            );
-            let screens = capture::screens()?;
-            ensure!(
-                screens.len() < 5
-                    && state
-                        .journal
-                        .owned
-                        .iter()
-                        .filter(|o| matches!(o.kind, 1 | 3))
-                        .count()
-                        < 3,
-                "显示器数量已达上限"
-            );
-            let primary = screens.iter().find(|s| s.primary).or(screens.first());
-            let size = primary.map_or((1920, 1080), |s| (s.width, s.height));
-            let dpi = primary.and_then(|s| s.dpi_scale).unwrap_or(100);
-            let mut modes = resolutions;
-            modes.push(size);
-            modes.sort_unstable();
-            modes.dedup();
-            validate_modes(&modes)?;
-            let spec = Virtual {
-                guid: uuid::Uuid::new_v4().to_string(),
-                identity: None,
-                width: size.0,
-                height: size.1,
-                hz: 144,
-                dpi,
-                kind: 1,
-                resolution_type: 1,
-                modes,
-                layout: None,
-            };
-            state.create(spec, lease, false)
-        })
-        .await
-    }
     /// Linux：撤一块虚拟屏就是让辅助程序断开那一路连接器，合成器会把它当成拔线。
-    #[cfg(not(windows))]
+
     pub(crate) async fn remove(&self, identity: String) -> Result<()> {
         self.run(move |state, lease| {
             let index = state.owned_index(&identity)?;
@@ -398,61 +350,9 @@ impl Session {
         .await
     }
 
-    #[cfg(windows)]
-    pub(crate) async fn remove(&self, identity: String) -> Result<()> {
-        self.run(move |state, lease| {
-            let index = state.owned_index(&identity)?;
-            ensure!(
-                matches!(state.journal.owned[index].kind, 1 | 3),
-                "不能用删除扩展屏操作退出超级屏"
-            );
-            ensure!(lease.requested(), "显示操作已取消");
-            state.save()?;
-            let current = Topology::query(true)?.snapshot()?;
-            if current.targets.len() == 1
-                && current.targets[0].identity == identity
-                && !state.journal.baseline.targets.is_empty()
-            {
-                state.restore_layout(&state.journal.baseline, &state.journal.dpi, false)?;
-            }
-            let guid = uuid::Uuid::parse_str(&state.journal.owned[index].guid)?;
-            lock(&state.driver()?.driver).remove(guid)?;
-            if state.journal.owned[index].kind == 3 {
-                state.preferences.default_virtual = false;
-            }
-            state.journal.owned.remove(index);
-            // Retain the completed removal even if Windows is still publishing
-            // the old active path while monitor departure is being processed.
-            state.save()?;
-            state.update_preferences()?;
-            state.applied()
-        })
-        .await
-    }
-    /// The singleton fallback is owned by the machine, never journal.owned.
-    #[cfg(windows)]
-    pub(crate) async fn ensure_fallback(
-        &self,
-        previous: capture::Screen,
-    ) -> Result<Option<capture::Screen>> {
-        self.run(move |state, lease| {
-            if state.journal.super_baseline.is_some() || !state.journal.owned.is_empty() {
-                return Ok(None);
-            }
-            ensure!(lease.requested(), "显示操作已取消");
-            fallback::ensure(
-                state.fallback_driver()?,
-                previous.width,
-                previous.height,
-                &[],
-                true,
-            )
-        })
-        .await
-    }
     /// Linux 的兜底屏不归驱动，归辅助程序那条连接：进程里留一块，连接断掉只是
     /// 放弃使用权。
-    #[cfg(not(windows))]
+
     pub(crate) async fn ensure_fallback(
         &self,
         previous: capture::Screen,
@@ -466,25 +366,7 @@ impl Session {
         })
         .await
     }
-    #[cfg(windows)]
-    pub(crate) fn fallback_screen(&self) -> Result<Option<capture::Screen>> {
-        let mut state = lock(&self.state);
-        if state
-            .fallback_pin
-            .as_ref()
-            .is_some_and(|d| d.fallback_state().is_err())
-        {
-            // A driver/device restart invalidates old handles. Re-open and pin
-            // the new generation before resuming its machine-owned monitor.
-            state.fallback_pin.take();
-            state.fallback_pin = fallback::pin()?;
-        }
-        match &state.fallback_pin {
-            Some(driver) => fallback::screen(driver),
-            None => Ok(None),
-        }
-    }
-    #[cfg(not(windows))]
+
     pub(crate) fn fallback_screen(&self) -> Result<Option<capture::Screen>> {
         let screen = fallback::screen()?;
         if screen.is_some() {
@@ -494,51 +376,14 @@ impl Session {
         }
         Ok(screen)
     }
-    #[cfg(windows)]
-    pub(crate) fn allows_fallback_retirement(&self) -> bool {
-        let state = lock(&self.state);
-        state.journal.owned.is_empty()
-            && state.journal.super_baseline.is_none()
-            && state.fallback_pin.as_ref().is_some_and(|driver| {
-                driver
-                    .fallback_state()
-                    .is_ok_and(|(_, users)| users <= u32::from(driver.owns_fallback_pin()))
-            })
-    }
-    #[cfg(not(windows))]
+
     pub(crate) fn allows_fallback_retirement(&self) -> bool {
         let state = lock(&self.state);
         state.journal.owned.is_empty()
             && state.journal.super_baseline.is_none()
             && fallback::allows_retirement()
     }
-    #[cfg(windows)]
-    pub(crate) async fn retire_fallback(&self, replacement: String) -> Result<bool> {
-        self.run(move |state, _| {
-            if !state.journal.owned.is_empty() || state.journal.super_baseline.is_some() {
-                return Ok(false);
-            }
-            let retiring = fallback::screen(state.fallback_driver()?)?.and_then(|s| s.identity);
-            let removed = fallback::retire(state.fallback_driver()?, Some(&replacement))?;
-            if removed {
-                // A session that changed modes must not later restore the
-                // fallback baseline after it has been deliberately retired.
-                let available = Topology::query(false)?.metadata()?;
-                state.journal.baseline.targets.retain(|old| {
-                    retiring.as_deref() != Some(old.identity.as_str())
-                        && available
-                            .iter()
-                            .any(|t| t.available && t.identity == old.identity)
-                });
-                if state.dirty {
-                    state.save()?;
-                }
-            }
-            Ok(removed)
-        })
-        .await
-    }
-    #[cfg(not(windows))]
+
     pub(crate) async fn retire_fallback(&self, replacement: String) -> Result<bool> {
         self.run(move |state, _| {
             if !state.journal.owned.is_empty() || state.journal.super_baseline.is_some() {
@@ -567,7 +412,7 @@ impl Session {
     /// 桌面，而 Wayland 下「让出来」和「铺满」都要靠合成器，这两步都还没做。主控那
     /// 边因为 `capture_setting` 是一个整档、没法只开虚拟屏，所以会把这个按钮画出来，
     /// 点了就在这里带着原因失败。
-    #[cfg(not(windows))]
+
     pub(crate) async fn enter_super(
         &self,
         _width: u32,
@@ -578,27 +423,10 @@ impl Session {
         anyhow::bail!("Linux 被控端暂不支持超级屏，请用扩展模式添加虚拟屏")
     }
 
-    #[cfg(not(windows))]
     pub(crate) async fn quit_super(&self) -> Result<()> {
         anyhow::bail!("Linux 被控端暂不支持超级屏，请用扩展模式添加虚拟屏")
     }
 
-    #[cfg(windows)]
-    pub(crate) async fn enter_super(
-        &self,
-        width: u32,
-        height: u32,
-        dpi: u32,
-        use_saved: bool,
-    ) -> Result<capture::Screen> {
-        self.run(move |state, lease| state.enter_super(width, height, dpi, use_saved, lease))
-            .await
-    }
-
-    #[cfg(windows)]
-    pub(crate) async fn quit_super(&self) -> Result<()> {
-        self.run(|state, _| state.quit_super(true)).await
-    }
     pub(crate) async fn resolution_choice(&self, identity: String, kind: i32) -> Result<()> {
         ensure!((2..=4).contains(&kind), "无效分辨率选择");
         self.run(move |state, _| {
@@ -622,7 +450,7 @@ impl Session {
     /// 我们自己造的虚拟屏要让合成器现造一个模式（VKMS 的模式表里没有这个分辨率）；
     /// 物理显示器走共享的 RandR + journal 那条路，和 X11、Windows 一样——旧模式记进
     /// journal，会话结束时恢复。
-    #[cfg(not(windows))]
+
     pub(crate) async fn set_resolution(
         &self,
         target: Target,
@@ -671,73 +499,12 @@ impl Session {
         .await
     }
 
-    #[cfg(windows)]
-    pub(crate) async fn set_resolution(
-        &self,
-        target: Target,
-        width: u32,
-        height: u32,
-    ) -> Result<capture::Screen> {
-        self.run(move |state, lease| {
-            if let Ok(current) = find_screen(&target.identity) {
-                if (current.width, current.height) == (width, height) {
-                    return Ok(current);
-                }
-            }
-            state.begin()?;
-            if state
-                .journal
-                .owned
-                .iter()
-                .any(|o| o.identity.as_deref() == Some(target.identity.as_str()))
-            {
-                return state.resize_virtual(target.identity, width, height, 0, lease);
-            }
-            let previous = state.journal.mode_changes.clone();
-            state.intend_mode(&target.identity, width, height)?;
-            if let Err(error) = target.set_resolution(width, height, || lease.requested()) {
-                if error
-                    .downcast_ref::<display::topology::ModeTestRejected>()
-                    .is_some()
-                {
-                    state.journal.mode_changes = previous;
-                    state.journal.desired = None;
-                    state.save()?;
-                }
-                return Err(error);
-            }
-            state.applied()?;
-            state.remember_physical(&target.identity, None)?;
-            find_screen(&target.identity)
-        })
-        .await
-    }
     /// Linux 上不报 DPI，主控也就不会给出这个选项；真收到了就直说做不到。
-    #[cfg(not(windows))]
+
     pub(crate) async fn set_dpi(&self, _target: Target, _dpi: u32) -> Result<()> {
         anyhow::bail!("Linux 被控端不能改显示器的 DPI")
     }
 
-    #[cfg(windows)]
-    pub(crate) async fn set_dpi(&self, target: Target, dpi: u32) -> Result<()> {
-        self.run(move |state, lease| {
-            state.begin()?;
-            state.intend_dpi(&target.identity, dpi)?;
-            target.set_dpi(dpi, || lease.requested())?;
-            if let Some(owned) = state
-                .journal
-                .owned
-                .iter_mut()
-                .find(|o| o.identity.as_deref() == Some(target.identity.as_str()))
-            {
-                owned.dpi = dpi;
-            }
-            state.applied()?;
-            state.remember_physical(&target.identity, None)?;
-            state.update_preferences()
-        })
-        .await
-    }
     pub(crate) async fn close(&self) -> Result<()> {
         if self.closed.swap(true, Ordering::AcqRel) {
             return Ok(());
@@ -790,7 +557,7 @@ impl Drop for Session {
 ///
 /// 先按 identity 找；有的合成器会给 X11 的输出另起名字（GNOME 那边是 XWAYLAND*），
 /// 那时按「创建之前没有、现在多了」认——这一刻清单里只可能多出刚接的这块。
-#[cfg(not(windows))]
+
 fn virtual_screen<'a>(
     screens: &'a [capture::Screen],
     identity: &str,
@@ -814,7 +581,7 @@ fn virtual_screen<'a>(
 /// 辅助程序给的是连接器名，而屏幕清单里是平台自己的 identity（X11 下是
 /// `x11/<输出名>`），两者不是一回事：拿连接器名去比 identity 会一直等不到，于是
 /// 明明建出来了也报「没有出现在桌面里」。
-#[cfg(not(windows))]
+
 fn wait_for_screen(connector: &str, before: &[String], lease: &Lease) -> Result<capture::Screen> {
     let identity = topology::identity(connector);
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
@@ -876,22 +643,6 @@ fn restore_dpi(values: &[(String, u32)]) -> Result<()> {
 }
 
 impl State {
-    #[cfg(windows)]
-    fn fallback_driver(&mut self) -> Result<&Driver> {
-        if self
-            .fallback_pin
-            .as_ref()
-            .is_some_and(|d| d.fallback_state().is_err())
-        {
-            self.fallback_pin.take();
-        }
-        if self.fallback_pin.is_none() {
-            self.fallback_pin = fallback::pin()?;
-        }
-        self.fallback_pin
-            .as_ref()
-            .context("常驻无屏显示需要安装或更新虚拟显示驱动")
-    }
     fn enter_super(
         &mut self,
         width: u32,
@@ -1167,7 +918,7 @@ impl State {
             .context("不是本次会话创建的虚拟显示器")
     }
     /// 到辅助程序的连接按需建立：没人加虚拟屏就不该去惊动一个 root 服务。
-    #[cfg(not(windows))]
+
     fn virtual_display(&mut self) -> Result<&mut crate::platform::virtual_display::Session> {
         if self.virtual_display.is_none() {
             self.virtual_display = Some(crate::platform::virtual_display::Session::open()?);
@@ -1184,7 +935,7 @@ impl State {
     /// 合成器，任何一个变了都会建不出来——在 niri 里加过屏、下次从 GNOME 登录，或者
     /// 辅助程序的服务被停了，都会走到这里。为它把整次连接废掉的话，这台机器就再也
     /// 连不上了，直到用户自己去删偏好文件。所以记一条警告、跳过，退回物理屏继续连。
-    #[cfg(not(windows))]
+
     fn restore_virtual(&mut self, spec: Virtual, lease: &Lease) -> Result<()> {
         let guid = spec.guid.clone();
         let result = validate_modes(&[(spec.width, spec.height)])
@@ -1200,14 +951,6 @@ impl State {
         Ok(())
     }
 
-    /// Windows 上虚拟屏驱动是装好的，建不出来说明环境真的坏了，照旧报错。
-    #[cfg(windows)]
-    fn restore_virtual(&mut self, spec: Virtual, lease: &Lease) -> Result<()> {
-        validate_modes(&[(spec.width, spec.height)])?;
-        self.create(spec, lease, false)?;
-        Ok(())
-    }
-
     /// 走合成器的那条虚拟屏创建路径。
     ///
     /// 和 [`Self::create`] 的区别不只是实现：这里没有基线拓扑要记、没有布局要算，
@@ -1215,7 +958,7 @@ impl State {
     /// 空动作。真正要做的只有三件——租一路连接器、等采集那边看见它、把它记进
     /// `journal.owned`（`annotate` 靠它把这块屏报成虚拟屏并挂上 `openuuyc-virtual`
     /// 这个身份）。
-    #[cfg(not(windows))]
+
     fn create_compositor(&mut self, spec: Virtual, lease: &Lease) -> Result<capture::Screen> {
         ensure!(
             self.journal.super_baseline.is_none(),
@@ -1301,7 +1044,7 @@ impl State {
 
     /// 辅助程序已经收回的虚拟屏（它重启过，旧连接上的租约就都没了），不再记在本次
     /// 会话名下。
-    #[cfg(not(windows))]
+
     fn forget_lost_virtual(&mut self) -> Result<()> {
         let Some(session) = self.virtual_display.as_mut() else {
             return Ok(());
@@ -1324,7 +1067,7 @@ impl State {
     /// 把一块我们自己造的虚拟屏切到另一个分辨率。
     ///
     /// 不能走物理屏那条 RandR 路：VKMS 的模式表里没有这个分辨率，只能让合成器现造。
-    #[cfg(not(windows))]
+
     fn resize_virtual_compositor(
         &mut self,
         identity: &str,
@@ -1371,7 +1114,7 @@ impl State {
         // 虚拟屏在 Linux 上走的不是驱动模型（见 create_compositor）。这里也要管住，
         // 因为「连接时就带一块虚拟屏」是从 initial.rs 直接调到这里来的，那一路的
         // kind 是 3（1 是会话里手动加的，3 是连接时自动加的）。
-        #[cfg(not(windows))]
+
         if matches!(spec.kind, 1 | 3) {
             // 「只用虚拟屏启动」在 Linux 上还没有可写的路径：它要求合成器把物理输出
             // 全部关掉，那是每个合成器一套接口。主控这次明确要的话，`prepare` 已经带着
@@ -1624,52 +1367,11 @@ impl State {
         layout.apply()?;
         Ok(())
     }
-    /// 只有 Windows 走得到：Linux 的 `Session::quit_super` 在更外层就带着原因拒绝了。
-    #[cfg(windows)]
-    fn quit_super(&mut self, explicit: bool) -> Result<()> {
-        if let Some(layout) = self.journal.super_baseline.clone() {
-            if !layout.targets.is_empty() {
-                let restored = self.restore_layout(&layout, &self.journal.super_dpi, true)?;
-                if let Some(changes) = self.journal.mode_changes.as_mut() {
-                    for change in changes
-                        .iter_mut()
-                        .filter(|c| restored.contains(&c.identity))
-                    {
-                        change.after = layout
-                            .targets
-                            .iter()
-                            .find(|t| t.identity == change.identity)
-                            .cloned();
-                        change.pending = false;
-                    }
-                    changes.retain(|c| !recovery::same_target(c.before.as_ref(), c.after.as_ref()));
-                }
-            }
-            let guids: Vec<_> = self
-                .journal
-                .owned
-                .iter()
-                .filter(|o| o.kind == 2)
-                .map(|o| o.guid.clone())
-                .collect();
-            for guid in &guids {
-                lock(&self.driver()?.driver).remove(uuid::Uuid::parse_str(guid)?)?;
-            }
-            self.journal.owned.retain(|o| o.kind != 2);
-            self.journal.super_baseline = None;
-            self.journal.super_dpi.clear();
-            self.applied()?;
-        }
-        if explicit {
-            self.preferences.super_enabled = false;
-            self.save_preferences()?;
-        }
-        Ok(())
-    }
+
     fn cleanup(&mut self) -> Result<()> {
         // 虚拟屏和 X11 的布局恢复没关系，所以放在最前面：`dirty` 为假时下面会直接
         // 返回，而那些连接器还是得还回去。
-        #[cfg(not(windows))]
+
         {
             // 先确认机器上还有别的屏，再把本次会话的虚拟屏还回去：它可能是拔掉物理
             // 屏之后唯一一块屏。查不到拓扑时不做兜底，也不拦着收尾。
@@ -1708,18 +1410,7 @@ impl State {
             return Ok(());
         }
         self.restore_layout(&self.journal.baseline, &self.journal.dpi, false)?;
-        #[cfg(windows)]
-        if !self.journal.owned.is_empty() && self.fallback_pin.is_some() {
-            let leaving: Vec<_> = self
-                .journal
-                .owned
-                .iter()
-                .filter_map(|o| o.identity.clone())
-                .collect();
-            // A manual/super screen may be the last output after the physical
-            // monitor was unplugged. Establish the persistent replacement first.
-            fallback::ensure(self.fallback_driver()?, 1920, 1080, &leaving, false)?;
-        }
+
         if !self.journal.owned.is_empty() {
             let driver = self.driver()?.driver.clone();
             for owned in &self.journal.owned {
@@ -1742,7 +1433,7 @@ impl State {
     }
 }
 
-#[cfg(all(test, not(windows)))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

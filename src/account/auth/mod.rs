@@ -113,10 +113,7 @@ impl LoginSession {
 
     pub(crate) fn generation(&self) -> String {
         use sha2::{Digest, Sha256};
-        format!(
-            "{:x}",
-            Sha256::digest(format!("{}\0{}", self.user_id, self.token))
-        )
+        hex::encode(Sha256::digest(format!("{}\0{}", self.user_id, self.token)))
     }
     pub fn token(&self) -> &str {
         &self.token

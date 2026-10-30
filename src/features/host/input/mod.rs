@@ -1,12 +1,9 @@
 //! Authenticated controlled-session input ownership.
 mod backend;
 // The installed Windows service's input agent, reached over a named pipe.
-#[cfg(windows)]
-pub(crate) mod broker;
+
 pub(crate) mod config;
-#[cfg(windows)]
-mod engine;
-#[cfg(target_os = "linux")]
+
 #[path = "engine_linux.rs"]
 mod engine;
 mod geometry;
@@ -154,10 +151,7 @@ impl Session {
         let thread = std::thread::Builder::new()
             .name("host-input".into())
             .spawn(move || {
-                #[cfg(target_os = "linux")]
                 run(state, rx, crate::platform::linux::input::realign_channel());
-                #[cfg(not(target_os = "linux"))]
-                run(state, rx);
             })
             .context("无法启动被控输入线程")?;
         Ok(Self {
@@ -339,11 +333,7 @@ impl Shared {
             && self.connected.load(Ordering::Acquire)
     }
 }
-fn run(
-    shared: Arc<Shared>,
-    rx: mpsc::Receiver<()>,
-    #[cfg(target_os = "linux")] realign: std::sync::mpsc::Receiver<()>,
-) {
+fn run(shared: Arc<Shared>, rx: mpsc::Receiver<()>, realign: std::sync::mpsc::Receiver<()>) {
     let mut engine: Option<Backend> = None;
     let mut generation = None;
     let mut require_service = false;
@@ -431,7 +421,7 @@ fn run(
         // `platform::linux::input::realign_pointer`。这也是一次注入，所以和别的
         // 输入一样要在许可之内（`generation` 只在许可之内才有值）；请求照样取走，
         // 许可收回时不会攒到之后再报。
-        #[cfg(target_os = "linux")]
+
         if realign.try_recv().is_ok()
             && generation.is_some()
             && let Some(engine) = engine.as_mut()

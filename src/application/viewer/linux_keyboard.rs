@@ -5,7 +5,7 @@
 //! active layout; X11 and Wayland have no such call, so the positional mapping
 //! lives here. It is keyed by physical position (US layout names in winit),
 //! which is what a remote desktop wants: the remote applies its own layout.
-#![cfg(not(windows))]
+
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 pub(crate) fn physical_virtual_key(key: PhysicalKey) -> Option<u16> {

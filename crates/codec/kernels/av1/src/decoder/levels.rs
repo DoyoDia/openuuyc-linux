@@ -6,7 +6,7 @@ use std::{fmt, mem};
 
 use bitflags::bitflags;
 use strum::{EnumCount, FromRepr};
-use zerocopy::{AsBytes, FromBytes, FromZeroes};
+use zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout};
 
 use crate::decoder::align::ArrayDefault;
 use crate::decoder::enum_map::{DefaultValue, EnumKey};
@@ -207,7 +207,7 @@ impl BlockPartition {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, FromRepr, EnumCount, FromZeroes)]
+#[derive(Clone, Copy, PartialEq, Eq, FromRepr, EnumCount, FromZeros)]
 pub enum BlockSize {
     Bs128x128 = 0,
     Bs128x64 = 1,
@@ -347,7 +347,7 @@ pub enum InterIntraType {
 ///
 /// This is `align(4)` because the C version is a `union` with a `uint32_t`.
 /// Being `align(4)` significantly speeds up things like `add_spatial_candidate`.
-#[derive(Clone, Copy, Eq, Default, FromZeroes, FromBytes, AsBytes)]
+#[derive(Clone, Copy, Eq, Default, FromBytes, IntoBytes, KnownLayout, Immutable)]
 #[repr(C, align(4))]
 pub struct Mv {
     pub y: i16,
@@ -448,7 +448,7 @@ pub struct Av1BlockIntra {
 
 /// Really an [`InterIntraPredMode`],
 /// but stored as a `u8` so there are no invalid bits.
-#[derive(Clone, Copy, PartialEq, Eq, FromZeroes, FromBytes, AsBytes)]
+#[derive(Clone, Copy, PartialEq, Eq, FromBytes, IntoBytes, KnownLayout, Immutable)]
 #[repr(transparent)]
 pub struct MaskedInterIntraPredMode(u8);
 
@@ -484,7 +484,7 @@ impl From<MaskedInterIntraPredMode> for InterIntraPredMode {
     }
 }
 
-#[derive(Clone, Default, FromZeroes, FromBytes, AsBytes)]
+#[derive(Clone, Default, FromBytes, IntoBytes, KnownLayout, Immutable)]
 #[repr(C)]
 pub struct Av1BlockInter1d {
     pub mv: [Mv; 2],
@@ -495,7 +495,7 @@ pub struct Av1BlockInter1d {
 
     pub interintra_mode: MaskedInterIntraPredMode,
 
-    /// For `impl `[`AsBytes`].
+    /// For `impl `[`IntoBytes`].
     pub _padding: u8,
 }
 
@@ -505,7 +505,7 @@ impl Av1BlockInter1d {
     }
 }
 
-#[derive(Clone, FromZeroes, FromBytes, AsBytes)]
+#[derive(Clone, FromBytes, IntoBytes, KnownLayout, Immutable)]
 #[repr(C)]
 pub struct Av1BlockInter2d {
     pub mv2d: Mv,
@@ -533,7 +533,7 @@ impl Av1BlockInterNd {
             assert!(mem::size_of::<Av1BlockInter1d>() == mem::size_of::<Av1BlockInter2d>());
         const _: () =
             assert!(mem::align_of::<Av1BlockInter1d>() == mem::align_of::<Av1BlockInter2d>());
-        FromBytes::ref_from(AsBytes::as_bytes(&self.one_d)).unwrap()
+        FromBytes::ref_from_bytes(IntoBytes::as_bytes(&self.one_d)).unwrap()
     }
 }
 
@@ -545,7 +545,7 @@ impl From<Av1BlockInter1d> for Av1BlockInterNd {
 
 impl From<Av1BlockInter2d> for Av1BlockInterNd {
     fn from(two_d: Av1BlockInter2d) -> Self {
-        let one_d = <Av1BlockInter1d as FromBytes>::ref_from(AsBytes::as_bytes(&two_d))
+        let one_d = <Av1BlockInter1d as FromBytes>::ref_from_bytes(IntoBytes::as_bytes(&two_d))
             .unwrap()
             .clone(); // Cheap 12-byte clone.
         Self { one_d }

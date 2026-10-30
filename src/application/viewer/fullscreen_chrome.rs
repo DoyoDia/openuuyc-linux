@@ -137,7 +137,7 @@ impl FullscreenChrome {
     ) -> R {
         let screen = ctx.content_rect();
         let size = 44.0;
-        let ball = egui::Area::new(egui::Id::new("viewer-fullscreen-ball"))
+        let ball = egui::Area::new(egui::Id::unique("viewer-fullscreen-ball"))
             .order(egui::Order::Foreground)
             .fixed_pos(egui::pos2(
                 (screen.right() - size - 12.0).max(screen.left()),
@@ -162,7 +162,7 @@ impl FullscreenChrome {
                 }
                 response.widget_info(|| {
                     egui::WidgetInfo::labeled(
-                        egui::WidgetType::Button,
+                        egui::Role::Button,
                         true,
                         if self.expanded {
                             "收起操作栏"
@@ -188,7 +188,7 @@ impl FullscreenChrome {
         }
         let width = floating_width(ctx);
         let mut action = R::default();
-        let toolbar = egui::Area::new(egui::Id::new("viewer-fullscreen-toolbar"))
+        let toolbar = egui::Area::new(egui::Id::unique("viewer-fullscreen-toolbar"))
             .order(egui::Order::Foreground)
             .fixed_pos(egui::pos2(
                 screen.center().x - (width + 2.0) / 2.0,
@@ -258,7 +258,7 @@ impl FullscreenChrome {
         };
         // Separate area sizes and an explicit position avoid a one-frame jump
         // when switching between the narrow handle and the full toolbar.
-        let response = egui::Area::new(egui::Id::new(("viewer-fullscreen-toolbar", self.expanded)))
+        let response = egui::Area::new(egui::Id::unique(("viewer-fullscreen-toolbar", self.expanded)))
             .order(egui::Order::Foreground)
             .fixed_pos(egui::pos2(
                 ctx.content_rect().center().x - surface_width / 2.0,
@@ -320,7 +320,7 @@ fn show_hint(ctx: &egui::Context, top: f32) {
     // Paint only: this reminder must never intercept desktop input or focus.
     let painter = ctx.layer_painter(egui::LayerId::new(
         egui::Order::Tooltip,
-        egui::Id::new("viewer-fullscreen-hint"),
+        egui::Id::unique("viewer-fullscreen-hint"),
     ));
     let galley = painter.layout(
         text,

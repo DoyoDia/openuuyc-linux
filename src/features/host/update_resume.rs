@@ -110,7 +110,7 @@ impl Context {
         }
         Some(Self {
             scope: scope.to_owned(),
-            controller: format!("{:x}", Sha256::digest(options.device_id.as_bytes())),
+            controller: hex::encode(Sha256::digest(options.device_id.as_bytes())),
             initial: params.encode_to_vec(),
         })
     }

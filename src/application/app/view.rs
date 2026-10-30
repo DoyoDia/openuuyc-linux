@@ -9,8 +9,7 @@ mod about;
 mod assist;
 mod assist_components;
 // Installing the service and drivers is part of the Windows setup.
-#[cfg(windows)]
-mod components;
+
 mod device_details;
 mod device_visuals;
 mod devices;
@@ -68,8 +67,6 @@ impl Page {
 
 #[derive(Default)]
 pub(super) struct CenterUi {
-    #[cfg(windows)]
-    pub(super) components: components::Manager,
     page: Page,
     device_lists: [devices::ListUi; 2],
     detail_id: Option<String>,
@@ -316,12 +313,7 @@ fn nav_item(
         Sense::click(),
     );
     response.widget_info(|| {
-        egui::WidgetInfo::selected(
-            egui::WidgetType::SelectableLabel,
-            ui.is_enabled(),
-            selected,
-            title,
-        )
+        egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, title)
     });
     if selected || response.hovered() || response.has_focus() {
         ui.painter()
@@ -700,11 +692,7 @@ impl DeviceCenterApp {
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .on_hover_text("在 GitHub 查看 OpenUUYC");
                 response.widget_info(|| {
-                    egui::WidgetInfo::labeled(
-                        egui::WidgetType::Button,
-                        true,
-                        "在 GitHub 查看 OpenUUYC",
-                    )
+                    egui::WidgetInfo::labeled(egui::Role::Button, true, "在 GitHub 查看 OpenUUYC")
                 });
                 let title_color = if response.hovered() { BLUE } else { TEXT };
                 if response.clicked() {
@@ -855,14 +843,6 @@ impl DeviceCenterApp {
                 ui.with_layout(egui::Layout::bottom_up(Align::Min), |ui| {
                     self.draw_account_footer(ui);
                     ui.add_space(8.0);
-                    #[cfg(windows)]
-                    {
-                        let active = self
-                            .host
-                            .as_ref()
-                            .is_some_and(|h| h.status().session_active);
-                        self.center_ui.components.button(ui, active);
-                    }
                 });
             });
     }
@@ -910,12 +890,11 @@ impl DeviceCenterApp {
             egui::Spinner::new().paint_at(ui, exit.shrink(5.0));
         } else {
             let response = ui
-                .interact(exit, ui.id().with("account-logout"), Sense::click())
+                .interact(exit, ui.scope_id().with("account-logout"), Sense::click())
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text("退出账号");
-            response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "退出账号")
-            });
+            response
+                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "退出账号"));
             if response.hovered() {
                 ui.painter().rect_filled(exit, 5.0, SURFACE);
             }
@@ -1049,7 +1028,7 @@ impl DeviceCenterApp {
         let response = ui
             .interact(
                 hit_rect,
-                ui.id().with("check-release"),
+                ui.scope_id().with("check-release"),
                 if enabled {
                     Sense::click()
                 } else {
@@ -1057,9 +1036,7 @@ impl DeviceCenterApp {
                 },
             )
             .on_hover_text(hint);
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, "检查更新")
-        });
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, "检查更新"));
         let response = if enabled {
             response.on_hover_cursor(egui::CursorIcon::PointingHand)
         } else {
@@ -1251,7 +1228,7 @@ impl DeviceCenterApp {
         self.alert(ui);
         crate::ui::controls::page_scroll("center-settings-scroll").show(ui, |ui| {
             self.startup_settings(ui);
-            #[cfg(target_os = "linux")]
+
             self.wayland_authorization_settings(ui);
             self.host_settings(ui);
             self.notification_settings(ui);
@@ -1390,14 +1367,6 @@ impl DeviceCenterApp {
                         });
                 },
             );
-            #[cfg(windows)]
-            {
-                let active = self
-                    .host
-                    .as_ref()
-                    .is_some_and(|h| h.status().session_active);
-                self.center_ui.components.management(ui, active);
-            }
         });
         if self.media != original_media {
             if let Err(error) = crate::media::preferences::save(self.media) {
@@ -1477,7 +1446,7 @@ impl DeviceCenterApp {
         let mut commit = false;
         let mut cancel = false;
         let rename = matches!(edit.action, EditAction::Rename);
-        let response = egui::Modal::new(egui::Id::new("edit-account-device"))
+        let response = egui::Modal::new(egui::Id::unique("edit-account-device"))
             .frame(dialog_frame())
             .show(ctx, |ui| {
                 ui.set_width(450.0);
@@ -1808,7 +1777,7 @@ fn phone_form(
                     singleline_input(&mut phone.country)
                         .hint_text("+86")
                         .char_limit(6)
-                        .horizontal_align(Align::Center),
+                        .align(egui::Align2::CENTER_TOP),
                 );
                 ui.add_sized(
                     [
@@ -1925,7 +1894,7 @@ impl DeviceCenterApp {
     fn logout_dialog(&mut self, ctx: &egui::Context) {
         let mut confirm = false;
         let mut cancel = false;
-        let response = egui::Modal::new(egui::Id::new("center-logout"))
+        let response = egui::Modal::new(egui::Id::unique("center-logout"))
             .frame(dialog_frame())
             .show(ctx, |ui| {
                 ui.set_width(410.0);

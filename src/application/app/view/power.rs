@@ -30,7 +30,7 @@ impl DeviceCenterApp {
         let mut commit = false;
         let mut cancel = false;
         let issue = self.power_available(&confirm.device, confirm.action).err();
-        let response = egui::Modal::new(egui::Id::new("device-power-confirmation"))
+        let response = egui::Modal::new(egui::Id::unique("device-power-confirmation"))
             .frame(dialog_frame()).show(ctx, |ui| {
                 ui.set_width(450.0_f32.min(ctx.content_rect().width() - 60.0));
                 cancel = crate::ui::controls::dialog_header(ui, &format!("{}这台设备？", confirm.action.label()), crate::ui::controls::DialogIcon::Warning, true);

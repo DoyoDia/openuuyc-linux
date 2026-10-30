@@ -122,10 +122,10 @@ fn specification(
             .add_sized(button_rect.size(), egui::Button::new("").frame(false))
             .on_hover_text("复制设备 ID");
         response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "复制设备 ID")
+            egui::WidgetInfo::labeled(egui::Role::Button, true, "复制设备 ID")
         });
         paint_glyph(ui.painter(), button_rect.shrink(4.0), Glyph::Copy, MUTED);
-        let feedback_id = ui.id().with(("copied-device-id", value));
+        let feedback_id = ui.scope_id().with(("copied-device-id", value));
         if response.clicked() {
             ui.ctx().copy_text(value.into());
             ui.ctx()
@@ -171,7 +171,7 @@ fn detail_button(
     );
     let response = ui.add_enabled_ui(enabled, |ui| ui.put(rect, button)).inner;
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled() && enabled, label)
+        egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled() && enabled, label)
     });
     let color = if ui.is_enabled() && enabled {
         color

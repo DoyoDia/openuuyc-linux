@@ -30,8 +30,7 @@ mod diagnostics;
 pub(crate) mod notifications;
 
 pub mod instance;
-#[cfg(windows)]
-pub(crate) mod maintenance;
+
 mod phone;
 mod power;
 mod updates;
@@ -48,23 +47,18 @@ pub struct GuiOptions {
 }
 
 pub fn run(options: GuiOptions) -> Result<()> {
-    #[cfg(target_os = "linux")]
     crate::platform::linux::gamescope::prepare_wallet();
     // Login startup enabled by an earlier version moves to the unit name the
     // portal recognizes. It runs systemctl, so it does not hold up startup.
-    #[cfg(target_os = "linux")]
+
     std::thread::spawn(crate::platform::host_service::startup::migrate);
     // The installed Windows service's user-side backend and its migration
     // recovery; Linux has no installed service.
-    #[cfg(windows)]
-    let _user_backend = crate::platform::windows::host_service::user_backend::Server::start()?;
-    #[cfg(windows)]
-    let _migration = crate::platform::windows::components::migration::UserRecovery::start();
+
     // 接管过 `uuremote://` 的话，把注册的命令改回当前这份程序（更新或换目录之后
     // 路径会变）。没接管过就什么都不做，不能因为启动一次就去抢别人的协议。
     // Linux 的协议登记在安装包的 .desktop 里，路径不随程序走。
-    #[cfg(windows)]
-    crate::platform::windows::assist_link::retarget_on_start();
+
     let _shortcuts = crate::application::viewer_shortcuts::Watcher::new()?;
     crate::features::host::displays::fallback::start_background();
     // 终端会话由这个进程托管。把表建起来，`gui --background` 这种连窗口都
@@ -126,13 +120,6 @@ pub fn run(options: GuiOptions) -> Result<()> {
             Box::new(app)
         }),
     )
-}
-/// A Windows toast button relaunches the program with its protocol URI; Linux
-/// desktop notifications report their actions to the running process.
-#[cfg(windows)]
-pub fn notification_activation(uri: &str) -> Result<()> {
-    notifications::Action::parse(uri)?;
-    instance::deliver_uri(uri)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -302,11 +289,8 @@ impl DeviceCenterApp {
     }
 
     fn show_background_failure(&self) {
-        #[cfg(target_os = "linux")]
         if self.background {
-            let _ = crate::ui::window_manager::send(
-                crate::ui::window_manager::Request::ShowMain,
-            );
+            let _ = crate::ui::window_manager::send(crate::ui::window_manager::Request::ShowMain);
         }
     }
 
@@ -1192,14 +1176,7 @@ impl DeviceCenterApp {
     }
     /// An install, update or uninstall of the Windows components is running.
     pub(super) fn maintenance_busy(&self) -> bool {
-        #[cfg(windows)]
-        {
-            self.center_ui.components.busy()
-        }
-        #[cfg(not(windows))]
-        {
-            false
-        }
+        { false }
     }
     fn prepare_exit(&mut self) {
         if !self.exit_requested || self.exit_pending || self.exit_ready || self.maintenance_busy() {
@@ -1265,8 +1242,7 @@ impl crate::ui::App for DeviceCenterApp {
         self.tick_power();
         self.draw_center(ui);
         self.draw_dialogs(&ctx);
-        #[cfg(windows)]
-        self.component_dialogs(&ctx);
+
         self.prepare_exit();
         if !self.exit_requested && !self.login_restoring && !self.login_running {
             self.update_dialog(&ctx);

@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::{cmp, mem, ptr, slice};
 
-use zerocopy::{AsBytes, FromZeroes};
+use zerocopy::{FromZeros, Immutable, IntoBytes, KnownLayout};
 
 use crate::decoder::align::{Align16, AlignedVec64};
 use crate::decoder::cpu::CpuFlags;
@@ -31,7 +31,7 @@ pub struct RefMvsTemporalBlock {
 }
 const _: () = assert!(mem::size_of::<RefMvsTemporalBlock>() == 5);
 
-#[derive(Clone, Copy, Eq, FromZeroes, AsBytes)]
+#[derive(Clone, Copy, Eq, FromZeros, IntoBytes, KnownLayout, Immutable)]
 // In C, this is packed and is 2 bytes.
 // In Rust, being packed and aligned is tricky
 #[repr(C, align(2))]
@@ -57,7 +57,7 @@ impl From<[i8; 2]> for RefMvsRefPair {
     }
 }
 
-#[derive(Clone, Copy, Default, Eq, FromZeroes, AsBytes)]
+#[derive(Clone, Copy, Default, Eq, FromZeros, IntoBytes, KnownLayout, Immutable)]
 #[repr(C)]
 #[repr(align(4))] // Is a `union` with a `uint64_t` in C, so `align(8)`, but `align(8)` doesn't allow `align(4)` for `RefMvsBlock`.
 pub struct RefMvsMvPair {
@@ -76,7 +76,7 @@ impl PartialEq for RefMvsMvPair {
     }
 }
 
-#[derive(Clone, Copy, FromZeroes)]
+#[derive(Clone, Copy, FromZeros)]
 // In C, this is packed and is 12 bytes.
 // In Rust, being packed and aligned is tricky
 #[repr(C, align(4))]
@@ -1628,7 +1628,7 @@ pub(crate) fn rav1d_refmvs_init_frame(
         let r_sz = 35 * 2 * n_blocks as usize * (1 + (n_frame_threads > 1) as usize) + R_PAD;
         let rp_proj_sz = 16 * n_blocks as usize;
         // TODO fallible allocation
-        rf.r.resize(r_sz, FromZeroes::new_zeroed());
+        rf.r.resize(r_sz, FromZeros::new_zeroed());
         rf.rp_proj.resize(rp_proj_sz, Default::default());
         rf.n_blocks = n_blocks;
     }

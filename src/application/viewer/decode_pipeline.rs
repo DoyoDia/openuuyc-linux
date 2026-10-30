@@ -205,8 +205,6 @@ pub(super) struct DecoderConfig {
     pub(super) decode_enabled: Arc<AtomicBool>,
     pub(super) decode_idle: tokio::sync::watch::Sender<u64>,
     pub(super) pause_epoch: Arc<std::sync::atomic::AtomicU64>,
-
-    pub(super) surface_writer: Option<crate::platform::surface::D3D11SurfaceWriter>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -318,14 +316,7 @@ pub(super) fn decoder_manager(
                 continue 'decode;
             }
             let (width, height) = stream_geometry(&config, format);
-            let opened = open_decoder_with_metadata(
-                &config,
-                frame.codec,
-                width,
-                height,
-                extra,
-                config.surface_writer.clone(),
-            );
+            let opened = open_decoder_with_metadata(&config, frame.codec, width, height, extra);
             match opened {
                 Ok(decoder) => {
                     config
@@ -631,7 +622,6 @@ pub(super) fn open_decoder_with_metadata(
     width: u32,
     height: u32,
     extra_data: Option<Bytes>,
-    surface_writer: Option<crate::platform::surface::D3D11SurfaceWriter>,
 ) -> Result<NativeVideoDecoder> {
     tracing::debug!(
         ?codec,
@@ -642,27 +632,14 @@ pub(super) fn open_decoder_with_metadata(
     );
     let extra = extra_data.unwrap_or_default();
 
-    let opened = match surface_writer {
-        Some(surface_writer) => NativeVideoDecoder::open_with_surface_writer(
-            codec,
-            width,
-            height,
-            config.frame_rate,
-            config.decoder,
-            extra,
-            surface_writer,
-        ),
-        None => NativeVideoDecoder::open(
-            codec,
-            width,
-            height,
-            config.frame_rate,
-            config.decoder,
-            extra,
-        ),
-    };
-
-    opened
+    NativeVideoDecoder::open(
+        codec,
+        width,
+        height,
+        config.frame_rate,
+        config.decoder,
+        extra,
+    )
 }
 
 pub(super) fn video_format_label(codec: VideoCodec, format: VideoFormatSignature) -> String {

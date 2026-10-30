@@ -253,7 +253,7 @@ fn version_prompt(
 ) -> (Option<bool>, bool) {
     let mut chosen = None;
     let mut dismiss = false;
-    let response = egui::Modal::new(egui::Id::new("remote-version-too-low"))
+    let response = egui::Modal::new(egui::Id::unique("remote-version-too-low"))
         .frame(controls::dialog_frame())
         .show(ctx, |ui| {
             ui.set_width(
@@ -290,7 +290,7 @@ fn version_prompt(
 
 fn result_prompt(ctx: &egui::Context, message: &str) -> bool {
     let mut close = false;
-    let response = egui::Modal::new(egui::Id::new("remote-update-request-result"))
+    let response = egui::Modal::new(egui::Id::unique("remote-update-request-result"))
         .frame(controls::dialog_frame())
         .show(ctx, |ui| {
             ui.set_width(
@@ -311,7 +311,7 @@ fn result_prompt(ctx: &egui::Context, message: &str) -> bool {
 
 pub(crate) fn progress_prompt(ctx: &egui::Context, started: Instant) -> bool {
     let mut close = false;
-    egui::Modal::new(egui::Id::new("remote-upgrade-progress"))
+    egui::Modal::new(egui::Id::unique("remote-upgrade-progress"))
         .frame(controls::dialog_frame())
         .show(ctx, |ui| {
             ui.set_width(

@@ -207,7 +207,7 @@ impl crate::ui::App for Window {
                     egui::pos2(divider_x + theme::FILES_SPLITTER / 2., panes.bottom()),
                 );
                 let split_response =
-                    files::divider(ui, divider, ui.id().with("file-pane-divider"), true);
+                    files::divider(ui, divider, ui.scope_id().with("file-pane-divider"), true);
                 if split_response.dragged()
                     && let Some(pos) = split_response.interact_pointer_pos()
                 {
@@ -251,7 +251,7 @@ impl crate::ui::App for Window {
                     vec2(panes.width(), theme::FILES_SPLITTER),
                 );
                 let response =
-                    files::divider(ui, separator, ui.id().with("file-queue-divider"), false);
+                    files::divider(ui, separator, ui.scope_id().with("file-queue-divider"), false);
                 if response.dragged()
                     && let Some(pos) = response.interact_pointer_pos()
                 {
@@ -392,7 +392,7 @@ impl Window {
 fn operation_prompt(ctx: &egui::Context, d: &mut Dialog, policy: &mut i32) -> (bool, bool) {
     let mut yes = false;
     let mut no = false;
-    let response = egui::Modal::new(egui::Id::new("file-operation"))
+    let response = egui::Modal::new(egui::Id::unique("file-operation"))
         .frame(controls::dialog_frame())
         .show(ctx, |ui| {
             ui.set_width(theme::FILES_DIALOG_WIDTH);

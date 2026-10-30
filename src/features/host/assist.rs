@@ -2,7 +2,7 @@
 
 use crate::session::host_client::HostClient;
 use anyhow::{Context, Result, ensure};
-use rand::Rng;
+use rand::RngExt;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -418,7 +418,7 @@ fn verifier(salt: &str, code: &str) -> String {
     let mut hash = Sha256::new();
     hash.update(salt.as_bytes());
     hash.update(code.as_bytes());
-    format!("{:x}", hash.finalize())
+    hex::encode(hash.finalize())
 }
 
 enum Completion {

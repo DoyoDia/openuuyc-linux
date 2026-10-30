@@ -1,13 +1,8 @@
 //! Shared borderless window chrome and native fallback background.
 use super::controls::{ViewerCaptionIcon as TitleIcon, viewer_caption_button as title_icon_button};
-#[cfg(windows)]
-use super::gfx::window_hwnd;
+
 use winit::window::{ResizeDirection, Window};
 
-#[cfg(windows)]
-#[path = "chrome_native_windows.rs"]
-mod native;
-#[cfg(not(windows))]
 #[path = "chrome_native_linux.rs"]
 mod native;
 
@@ -17,8 +12,6 @@ pub(crate) use native::{
 };
 // Windows positions borderless windows itself and keeps them below the work
 // area's top; X11 and Wayland window managers do that on their own.
-#[cfg(windows)]
-pub(crate) use native::constrain_drag_position;
 
 pub(crate) struct TitleBarAlert {
     pub source: String,
@@ -97,7 +90,7 @@ pub(crate) fn window_title_bar(
 ///
 /// 目前只有 Linux 的播放器用它：Windows 播放器整条 caption 都是自己画的
 /// （`windows_presenter/chrome.rs`），不经过 [`window_title_bar`]。
-#[cfg_attr(windows, allow(dead_code, reason = "Windows 播放器自己画 caption"))]
+
 pub(crate) fn window_title_bar_with_identity(
     ui: &mut egui::Ui,
     window: &Window,
@@ -250,7 +243,7 @@ fn title_drag(
 ) {
     let drag = ui.interact(
         area,
-        ui.id().with("window-title-drag"),
+        ui.scope_id().with("window-title-drag"),
         egui::Sense::click_and_drag(),
     );
     if let Some(state) = move_state {
@@ -304,7 +297,7 @@ fn title_regions(rect: egui::Rect, maximize: bool) -> (egui::Rect, egui::Rect) {
 }
 
 pub(crate) fn paint_brand_logo(ui: &mut egui::Ui) {
-    let key = egui::Id::new("window-brand-logo");
+    let key = egui::Id::unique("window-brand-logo");
     let texture = ui
         .ctx()
         .data(|data| data.get_temp::<egui::TextureHandle>(key))
@@ -417,7 +410,7 @@ pub(crate) fn resize_regions(
     // Page panels own the background layer. Keep the narrow resize handles
     // above them so a central panel cannot swallow border gestures.
     let resize_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect).layer_id(
-        egui::LayerId::new(egui::Order::Foreground, ui.id().with("window-resize")),
+        egui::LayerId::new(egui::Order::Foreground, ui.scope_id().with("window-resize")),
     ));
     let edge = 6.0;
     let corner = 12.0;
@@ -489,7 +482,11 @@ pub(crate) fn resize_regions(
     ];
     for (index, (region, direction, cursor)) in regions.into_iter().enumerate() {
         let response = resize_ui
-            .interact(region, ui.id().with(("resize", index)), egui::Sense::drag())
+            .interact(
+                region,
+                ui.scope_id().with(("resize", index)),
+                egui::Sense::drag(),
+            )
             .on_hover_cursor(cursor);
         handle(&response, direction);
     }

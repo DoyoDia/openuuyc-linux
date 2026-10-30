@@ -15,7 +15,7 @@ impl Store {
         Ok(Self(
             base.join("OpenUUYC")
                 .join("port-mapping")
-                .join(format!("{:x}", Sha256::digest(account.as_bytes())))
+                .join(hex::encode(Sha256::digest(account.as_bytes())))
                 .join(format!("{device}.json")),
         ))
     }

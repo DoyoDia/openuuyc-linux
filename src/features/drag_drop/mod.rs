@@ -40,10 +40,7 @@ pub(crate) enum Stage {
     Preparing,
     Dragging,
     Submitted,
-    #[cfg_attr(
-        not(windows),
-        allow(dead_code, reason = "Only the Windows viewer offers the drag return.")
-    )]
+    #[allow(dead_code, reason = "Only the Windows viewer offers the drag return.")]
     Returning,
     Reading,
     Complete,
@@ -183,10 +180,7 @@ enum Command {
     Prepared(u64, Result<FileSummary, String>),
     Offer(u64, FileOffer, Result<FileSummary, String>),
     Native(u64, native::Event),
-    #[cfg_attr(
-        not(windows),
-        allow(dead_code, reason = "Only the Windows viewer offers the drag return.")
-    )]
+    #[allow(dead_code, reason = "Only the Windows viewer offers the drag return.")]
     Resume(u64),
     Image(u64, wire::DragImage),
 }

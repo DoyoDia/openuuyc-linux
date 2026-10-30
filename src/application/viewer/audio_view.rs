@@ -273,7 +273,7 @@ impl AudioView {
             let c = response.rect.center();
             response.widget_info(|| {
                 egui::WidgetInfo::labeled(
-                    egui::WidgetType::Button,
+                    egui::Role::Button,
                     true,
                     if settings.muted {
                         "继续监听"

@@ -46,17 +46,6 @@ fn state_directory(directory: &Path) -> io::Result<PathBuf> {
     let state = directory.join(".state");
     fs::create_dir_all(&state)?;
 
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        use windows::{
-            Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, SetFileAttributesW},
-            core::PCWSTR,
-        };
-        let path: Vec<u16> = state.as_os_str().encode_wide().chain(Some(0)).collect();
-        unsafe { SetFileAttributesW(PCWSTR(path.as_ptr()), FILE_ATTRIBUTE_HIDDEN) }
-            .map_err(io::Error::other)?;
-    }
     // The leading dot already hides the directory on Linux desktops.
     Ok(state)
 }
@@ -75,26 +64,6 @@ pub(super) fn save_config(path: &Path, bytes: &[u8]) -> Result<()> {
         file.sync_all()?;
         drop(file);
 
-        #[cfg(windows)]
-        {
-            use std::os::windows::ffi::OsStrExt;
-            use windows::{
-                Win32::Storage::FileSystem::{
-                    MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
-                },
-                core::PCWSTR,
-            };
-            let from: Vec<u16> = temporary.as_os_str().encode_wide().chain(Some(0)).collect();
-            let to: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-            unsafe {
-                MoveFileExW(
-                    PCWSTR(from.as_ptr()),
-                    PCWSTR(to.as_ptr()),
-                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-                )
-            }?;
-        }
-        #[cfg(not(windows))]
         {
             // rename(2) replaces the target atomically within one filesystem.
             fs::rename(&temporary, path)?;
@@ -109,30 +78,6 @@ pub(super) fn save_config(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 pub(super) fn open_directory(directory: &Path) -> Result<()> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        use windows::{
-            Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
-            core::{PCWSTR, w},
-        };
-        // Runtime.directory has already been resolved to the physical directory.
-        let path: Vec<u16> = directory.as_os_str().encode_wide().chain(Some(0)).collect();
-        let result = unsafe {
-            ShellExecuteW(
-                None,
-                w!("open"),
-                PCWSTR(path.as_ptr()),
-                None,
-                None,
-                SW_SHOWNORMAL,
-            )
-        };
-        if result.0 as isize <= 32 {
-            bail!("打开日志文件夹失败（{}）", result.0 as isize);
-        }
-    }
-    #[cfg(not(windows))]
     {
         let status = std::process::Command::new("xdg-open")
             .arg(directory)

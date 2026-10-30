@@ -67,7 +67,7 @@ fn marker(ui: &Ui, p: Pos2, r: f32) {
         .circle_stroke(p, r, Stroke::new(2., Color32::WHITE));
 }
 pub(super) fn show(ui: &mut Ui, rgb: &mut [u8; 3], opacity: &mut u8) {
-    let id = ui.id().with("annotation-colour-editor");
+    let id = ui.scope_id().with("annotation-colour-editor");
     let mut editor = ui
         .data_mut(|d| d.get_temp::<Editor>(id))
         .unwrap_or_else(|| Editor::new(*rgb));

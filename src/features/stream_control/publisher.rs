@@ -297,19 +297,6 @@ fn flags() -> PbFeatureFlag {
     }
 }
 
-/// The capability level this host can honour.
-///
-/// 5 那一档在协议里是一整包「分辨率转换 + DPI 设置 + 虚拟屏」，6 再加 HDR，主控是
-/// 按这一档整体开菜单的（见 `display_topology::support`），没法只开其中一项。Linux
-/// 上有把握的只有虚拟屏：root 辅助程序接一路 VKMS 连接器，niri 认下它就是一块新显
-/// 示器（见 `crates/vkms`）。物理屏的分辨率走 RandR，X11 会话里能用、Wayland 下不
-/// 行；DPI 和超级屏还没有可写的路径。所以报 5 意味着「虚拟屏真的能用，其余几项会带
-/// 着原因失败」，而不是像以前那样把它们全藏起来——藏起来的代价是连虚拟屏都点不了。
-#[cfg(windows)]
-fn capture_setting() -> i32 {
-    6
-}
-
 /// 见上。辅助程序装了、当前桌面接得住新输出、内核的 VKMS 有 configfs 接口，三件事
 /// 都成立才报 5（见 `virtual_display::ready`）。
 ///
@@ -318,7 +305,7 @@ fn capture_setting() -> i32 {
 /// 一块屏再拔掉，本机用户能看到布局跳一下）；6.19 以前的内核上 niri 也一样。中途装上
 /// 辅助程序要重开程序才会对外改口，这比在握手时去连一个 root 服务（那会顺手把它拉
 /// 起来）划算。
-#[cfg(not(windows))]
+
 fn capture_setting() -> i32 {
     use std::sync::OnceLock;
     static READY: OnceLock<bool> = OnceLock::new();

@@ -2,7 +2,7 @@
 //! Fixed 8-bit AVC encoder kernels. All wide DSP and format switches stay out
 //! of this path. Fixed encoder reconstruction is checked against the shared DSP.
 // Quantization/combined-mode strategies derive from Cisco OpenH264 (BSD-2-Clause);
-// see licenses/openh264-algorithms.txt and THIRD_PARTY_NOTICES.
+// see the repository LICENSE and NOTICES.md files.
 /// Fixed 8-bit, zero-offset chroma mapping (H.264 Table 8-15).
 #[inline]
 pub(super) fn chroma_qp(qp: i32) -> i32 {

@@ -22,7 +22,7 @@ pub(crate) enum Icon {
 pub(crate) fn icon_at(ui: &mut Ui, rect: Rect, icon: Icon, label: &str, enabled: bool) -> Response {
     let response = ui.interact(
         rect,
-        ui.id().with(label),
+        ui.scope_id().with(label),
         if enabled {
             Sense::click()
         } else {
@@ -45,7 +45,7 @@ pub(crate) fn icon_at(ui: &mut Ui, rect: Rect, icon: Icon, label: &str, enabled:
             theme::MUTED
         },
     );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     response.on_hover_text(label)
 }
 
@@ -65,7 +65,7 @@ pub(crate) fn button_at(
 ) -> Response {
     let response = ui.interact(
         rect,
-        ui.id()
+        ui.scope_id()
             .with((label, rect.min.x.to_bits(), rect.min.y.to_bits())),
         if enabled {
             Sense::click()
@@ -114,7 +114,7 @@ pub(crate) fn button_at(
     ui.painter()
         .with_clip_rect(rect.intersect(ui.clip_rect()))
         .galley(rect.center() - galley.size() / 2., galley, color);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     response
 }
 
@@ -137,7 +137,7 @@ pub(crate) fn icon(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> Respo
             theme::MUTED
         },
     );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     response.on_hover_text(label)
 }
 
@@ -322,7 +322,7 @@ pub(crate) fn file_row(
 
 pub(crate) fn table_heading(ui: &mut Ui, rect: Rect, label: &str, right: bool) -> Response {
     text(ui, rect.shrink2(vec2(8., 0.)), label, theme::MUTED, right);
-    ui.interact(rect, ui.id().with(label), Sense::click())
+    ui.interact(rect, ui.scope_id().with(label), Sense::click())
 }
 
 pub(crate) fn empty(ui: &Ui, rect: Rect, message: &str) {

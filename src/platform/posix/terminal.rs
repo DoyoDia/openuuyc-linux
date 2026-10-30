@@ -1,13 +1,7 @@
 //! Pseudo-terminal sessions for the host (被控) terminal feature.
 //!
-//! UU's Android client can open a shell on the controlled machine
-//! (`CT_TERMINAL`, connection `kind = 8`). The macOS server does this with
-//! `forkpty()` plus tmux for reattachment; this module is the pty half.
-//!
-//! Shared by Linux and macOS — the pty contract is the same on both, and the
-//! only real divergence (`ptsname_r` is Linux-only) is `cfg`-gated in
-//! [`slave_path`]. Windows is a separate backend (`platform/windows/terminal.rs`)
-//! because ConPTY has nothing in common with this.
+//! UU's Android client can open a shell on the controlled Linux machine
+//! (`CT_TERMINAL`, connection `kind = 8`). This module owns the Linux PTY.
 //!
 //! We deliberately do not call `forkpty()`. `fork()` in a threaded process
 //! leaves only the calling thread alive in the child, and the child must not
@@ -44,7 +38,7 @@ pub(crate) fn unavailable() -> Option<&'static str> {
 
 /// 能不能报出前台命令。只有 Linux 的 `/proc/<pid>/stat` 给了前台进程组。
 pub(crate) fn foreground_supported() -> bool {
-    cfg!(target_os = "linux")
+    true
 }
 
 /// The shell a terminal emulator would start on this system.
@@ -56,11 +50,8 @@ pub(crate) fn default_shell() -> String {
 }
 
 /// `$SHELL` is usually set, but a service environment need not have it.
-#[cfg(target_os = "linux")]
+
 const DEFAULT_SHELL: &str = "/bin/bash";
-/// macOS has defaulted to zsh for the interactive shell since Catalina.
-#[cfg(target_os = "macos")]
-const DEFAULT_SHELL: &str = "/bin/zsh";
 
 /// Maps the controller's shell choice to a real program.
 ///
@@ -184,7 +175,7 @@ impl Session {
     /// 不查 `tcgetpgrp(master)`：master 不是控制终端，Linux 上它拿不到前台
     /// 进程组。改成读 shell 自己的 `/proc/<pid>/stat`，其中的 `tpgid` 正是
     /// 这个 pty 的前台进程组。
-    #[cfg(target_os = "linux")]
+
     pub(crate) fn foreground(&self) -> Option<crate::platform::Foreground> {
         let shell = self.child.id() as i32;
         let group = foreground_group(shell)?;
@@ -213,12 +204,6 @@ impl Session {
             name,
             command: shorten(command, 200),
         })
-    }
-
-    /// macOS 没有 `/proc`，拿不到前台进程组里的进程名。
-    #[cfg(not(target_os = "linux"))]
-    pub(crate) fn foreground(&self) -> Option<crate::platform::Foreground> {
-        None
     }
 
     /// Reads whatever is available. `Ok(None)` means nothing is buffered yet;
@@ -301,14 +286,10 @@ impl Session {
     /// as the user with nobody able to reach them.
     ///
     /// Linux walks `/proc` for every process still in the shell's session
-    /// (`setsid()` made the shell's pid its id) and hangs up each one. macOS
-    /// has no `/proc`, so there it falls back to the shell's process group
-    /// alone: a job that made its own group can outlive this. That difference
-    /// is real and is why the two arms are written out separately rather than
-    /// pretending one implementation covers both.
+    /// (`setsid()` made the shell's pid its id) and hangs up each one.
     pub(crate) fn terminate(mut self) {
         let leader = self.child.id() as i32;
-        #[cfg(target_os = "linux")]
+
         {
             for pid in &session_members(leader) {
                 // SAFETY: kill takes no pointers; `pid` was read from /proc as
@@ -329,29 +310,13 @@ impl Session {
                 }
             }
         }
-        #[cfg(target_os = "macos")]
-        {
-            // The shell called `setsid()`, so its pid is also its process
-            // group; a negative pid asks for the whole group.
-            // SAFETY: kill takes no pointers, and the group is the shell's.
-            unsafe {
-                libc::kill(-leader, libc::SIGHUP);
-            }
-            let deadline = Instant::now() + HANGUP_GRACE;
-            while Instant::now() < deadline && !self.exited() {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            // SAFETY: as above.
-            unsafe {
-                libc::kill(-leader, libc::SIGKILL);
-            }
-        }
+
         // Drop reaps the shell (and kills its group if it still runs).
     }
 }
 
 /// `/proc/<pid>/stat` 里的前台进程组（`tpgid`）。
-#[cfg(target_os = "linux")]
+
 fn foreground_group(pid: i32) -> Option<i32> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     // `pid (comm) state ppid pgrp session tty_nr tpgid ...`；comm 里可能有
@@ -362,7 +327,6 @@ fn foreground_group(pid: i32) -> Option<i32> {
     fields.nth(4).and_then(|value| value.parse::<i32>().ok())
 }
 
-#[cfg(target_os = "linux")]
 fn shorten(text: String, limit: usize) -> String {
     if text.chars().count() <= limit {
         return text;
@@ -378,7 +342,7 @@ fn shorten(text: String, limit: usize) -> String {
 /// does not hand that number to a new process while any member of the session
 /// is alive, so a match is a process the shell started. A zombie is left out:
 /// it is already dead and only waits to be reaped.
-#[cfg(target_os = "linux")]
+
 fn session_members(session: i32) -> Vec<i32> {
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return Vec::new();
@@ -476,10 +440,8 @@ fn open_pair() -> Result<(OwnedFd, OwnedFd)> {
 
 /// The slave's device path.
 ///
-/// Linux offers the reentrant `ptsname_r`; macOS only has `ptsname`, which
-/// writes a static buffer. The macOS branch copies out of that buffer under a
-/// mutex so two sessions opening at once cannot read each other's name.
-#[cfg(target_os = "linux")]
+/// Uses Linux's reentrant `ptsname_r`.
+
 fn slave_path(master: RawFd) -> Result<std::ffi::CString> {
     let mut name = [0 as libc::c_char; 128];
     // SAFETY: `name` is writable for its full length, which is what we pass,
@@ -490,21 +452,6 @@ fn slave_path(master: RawFd) -> Result<std::ffi::CString> {
     }
     // SAFETY: ptsname_r wrote a NUL-terminated path into `name`.
     Ok(unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) }.to_owned())
-}
-
-#[cfg(target_os = "macos")]
-fn slave_path(master: RawFd) -> Result<std::ffi::CString> {
-    use std::sync::Mutex;
-    static NAME: Mutex<()> = Mutex::new(());
-    let _guard = NAME.lock().unwrap_or_else(|e| e.into_inner());
-    // SAFETY: `ptsname` returns a pointer to a static buffer; the mutex above
-    // serialises the copy out of it, which is all we do with it.
-    let name = unsafe { libc::ptsname(master) };
-    if name.is_null() {
-        return Err(std::io::Error::last_os_error()).context("读取 pty 名称失败");
-    }
-    // SAFETY: the pointer is a NUL-terminated path owned by libc.
-    Ok(unsafe { std::ffi::CStr::from_ptr(name) }.to_owned())
 }
 
 fn set_nonblocking(fd: RawFd) -> Result<()> {
@@ -544,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "linux")]
+
     fn the_foreground_reports_the_running_command() {
         let session = Session::open("/bin/sh", 80, 24).expect("open pty");
         // 空闲时前台是 shell 自己，页面上应当显示「空闲」。
@@ -599,9 +546,8 @@ mod tests {
     }
 
     /// Where each open descriptor of `pid` points.
-    /// Linux exposes a process's descriptors as symlinks; macOS has no
-    /// equivalent view, so the two tests below only run on Linux.
-    #[cfg(target_os = "linux")]
+    /// Linux exposes a process's descriptors as symlinks in `/proc`.
+
     fn descriptor_targets(pid: u32) -> Vec<String> {
         std::fs::read_dir(format!("/proc/{pid}/fd"))
             .expect("list child descriptors")
@@ -611,7 +557,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "linux")]
+
     fn a_shell_does_not_inherit_another_sessions_pty() {
         let first = Session::open("/bin/sh", 80, 24).expect("open first pty");
         let mut second = Session::open("/bin/sh", 80, 24).expect("open second pty");
@@ -658,10 +604,10 @@ mod tests {
     }
 
     /// `terminate` has to reach past the shell's own group, or a background
-    /// job keeps running with nobody able to reach it. Linux only: the
-    /// membership check is the /proc walk that macOS does not have.
+    /// job keeps running with nobody able to reach it. Membership is checked
+    /// by walking `/proc`.
     #[test]
-    #[cfg(target_os = "linux")]
+
     fn terminating_ends_background_jobs_in_their_own_groups() {
         let mut session = Session::open("/bin/bash", 80, 24).expect("open pty");
         // Job control puts the job in a process group of its own, and

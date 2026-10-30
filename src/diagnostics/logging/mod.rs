@@ -71,12 +71,12 @@ modules! {
     ("auth", "登录与凭据", false, ["openuuyc::account::auth", "openuuyc::account::login", "openuuyc::account::session_restore"]),
     ("api", "账号接口", false, ["openuuyc::account::api", "openuuyc::account::client", "openuuyc::account::nrd_http", "openuuyc::account::assist"]),
     ("presence", "在线状态", false, ["openuuyc::session::presence", "openuuyc::session::device_session"]),
-    ("host", "本机被控", false, ["openuuyc::features::host", "openuuyc_codec::encoder", "openuuyc::media::encoding", "openuuyc::platform::windows::software_encoder", "openuuyc::platform::windows::capture", "openuuyc::platform::windows::encoder", "openuuyc::platform::windows::nvenc", "openuuyc::platform::windows::amf", "openuuyc::platform::windows::qsv", "openuuyc::platform::windows::gdi", "openuuyc::platform::windows::preprocess", "openuuyc::platform::windows::transfer", "openuuyc::platform::windows::gpu_conversion", "openuuyc::platform::windows::cursor", "openuuyc::platform::windows::wol", "openuuyc::platform::linux::capture", "openuuyc::platform::linux::encoder", "openuuyc::platform::linux::software_encoder", "openuuyc::platform::linux::vaapi_encoder", "openuuyc::platform::linux::host_service", "openuuyc::platform::linux::nvenc", "openuuyc::platform::linux::cuda", "openuuyc::platform::linux::cursor_shape", "openuuyc::platform::linux::wol"]),
+    ("host", "本机被控", false, ["openuuyc::features::host", "openuuyc_codec::encoder", "openuuyc::media::encoding", "openuuyc::platform::linux::capture", "openuuyc::platform::linux::encoder", "openuuyc::platform::linux::software_encoder", "openuuyc::platform::linux::vaapi_encoder", "openuuyc::platform::linux::host_service", "openuuyc::platform::linux::nvenc", "openuuyc::platform::linux::cuda", "openuuyc::platform::linux::cursor_shape", "openuuyc::platform::linux::wol"]),
     ("signal", "信令与协商", false, ["openuuyc::transport::signal"]),
     ("rtc", "实时传输", false, ["openuuyc::transport::rtc", "openuuyc::transport::uu_kcp"]),
     ("recovery", "丢包恢复", false, ["openuuyc::transport::official_receiver", "openuuyc::nack_audit", "openuuyc::transport::rsfec", "openuuyc::transport::ulpfec", "openuuyc::transport::flexfec", "openuuyc::transport::xor_fec"]),
-    ("decoder", "视频解码", false, ["openuuyc::media::decoder", "openuuyc::media::decoder_pool", "openuuyc::media::decoder_result", "openuuyc::media::codec_parameters", "openuuyc_codec::decoder", "openuuyc_h264", "openuuyc_av1::bitstream", "openuuyc_av1::decoder", "openuuyc::platform::windows::decoder", "openuuyc::platform::windows::surface", "openuuyc::platform::linux::decoder"]),
-    ("viewer", "播放窗口", false, ["openuuyc::application::viewer", "openuuyc::session::controller::windows", "openuuyc::media::video_color", "openuuyc::media::video_format", "openuuyc::platform::windows::video_shader", "openuuyc::platform::windows::swapchain", "openuuyc::platform::linux::video_layer"]),
+    ("decoder", "视频解码", false, ["openuuyc::media::decoder", "openuuyc::media::decoder_pool", "openuuyc::media::decoder_result", "openuuyc::media::codec_parameters", "openuuyc_codec::decoder", "openuuyc_h264", "openuuyc_av1::bitstream", "openuuyc_av1::decoder", "openuuyc::platform::linux::decoder"]),
+    ("viewer", "播放窗口", false, ["openuuyc::application::viewer", "openuuyc::session::controller::windows", "openuuyc::media::video_color", "openuuyc::media::video_format", "openuuyc::platform::linux::video_layer"]),
     ("audio", "音频", false, ["openuuyc::media::audio", "openuuyc::media::microphone"]),
     ("control", "串流设置", false, ["openuuyc::features::stream_control", "openuuyc::features::viewing_settings"]),
     ("keyboard", "键盘输入", false, ["openuuyc::application::viewer::windows_keyboard", "openuuyc::application::viewer::linux_keyboard"]),
@@ -84,7 +84,7 @@ modules! {
     ("input", "控制发送", false, ["openuuyc::features::remote_input", "openuuyc::transport::rtc::input"]),
     ("performance", "性能与网络统计", false, ["openuuyc::diagnostics::performance", "openuuyc::features::network_control", "openuuyc::transport::timing", "openuuyc::transport::rtcp_timing", "openuuyc::transport::rtc::clock"]),
     ("plugins", "插件宿主", false, ["openuuyc::plugins"]),
-    ("ui", "界面渲染", false, ["openuuyc::ui", "openuuyc::ui_timing", "openuuyc::platform::windows::graphics", "openuuyc::platform::linux::graphics"]),
+    ("ui", "界面渲染", false, ["openuuyc::ui", "openuuyc::ui_timing", "openuuyc::platform::linux::graphics"]),
     ("webrtc", "WebRTC", true, ["webrtc", "webrtc_data", "webrtc_util", "interceptor"]),
     ("kcp", "KCP", true, ["kcp"]),
     ("ice", "ICE 直连与中转", true, ["webrtc_ice", "stun", "turn", "webrtc_mdns"]),
@@ -213,7 +213,7 @@ pub fn apply(mut settings: Settings) -> Result<()> {
 /// 数都是十进制。这个变量会被子进程继承，桌面自己拉起的程序也可能带着它（niri 的
 /// 会话里就有），所以光看它在不在会给没接 journal 的进程也挂一层 stderr，要比一比
 /// 自己标准错误的 `dev:ino`。
-#[cfg(target_os = "linux")]
+
 fn in_journal() -> bool {
     use std::os::unix::fs::MetadataExt;
     let Some(value) = std::env::var_os("JOURNAL_STREAM") else {
@@ -225,12 +225,6 @@ fn in_journal() -> bool {
     value
         .to_str()
         .is_some_and(|value| value == format!("{}:{}", stderr.dev(), stderr.ino()))
-}
-
-/// journal 是 Linux 的 systemd 才有的东西。
-#[cfg(not(target_os = "linux"))]
-fn in_journal() -> bool {
-    false
 }
 
 /// All viewer children belong to this application launch.

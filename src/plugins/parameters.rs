@@ -3,11 +3,11 @@ use super::*;
 use std::collections::BTreeMap;
 
 pub fn capturing(ctx: &egui::Context) -> bool {
-    ctx.data(|d| d.get_temp::<bool>(egui::Id::new("plugin-key-recording")))
+    ctx.data(|d| d.get_temp::<bool>(egui::Id::unique("plugin-key-recording")))
         .unwrap_or(false)
 }
 pub fn clear_capture_frame(ctx: &egui::Context) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new("plugin-key-recording"), false));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("plugin-key-recording"), false));
 }
 pub const ROW_HEIGHT: f32 = 34.0;
 pub(crate) use sdk::{ParameterChoice as Choice, ParameterField as Field};
@@ -201,18 +201,21 @@ impl Fields {
         control.spacing_mut().item_spacing.x = 4.0;
         let width = control_rect.width();
         let height = control_rect.height();
-        let id = control.id().with("edit");
+        let id = control.scope_id().with("edit");
         control.push_id("edit", |ui| {
             if field.kind == "hotkey" {
-                let recording = ui.id().with("recording");
+                let recording = ui.scope_id().with("recording");
                 let mut waiting = ui.data(|d| d.get_temp::<bool>(recording)).unwrap_or(false);
-                let was_waiting=waiting;
-                let secondary_release = ui.id().with("recorded-secondary-release");
-                let suppress_secondary = ui.data(|d| d.get_temp::<bool>(secondary_release)).unwrap_or(false);
+                let was_waiting = waiting;
+                let secondary_release = ui.scope_id().with("recorded-secondary-release");
+                let suppress_secondary = ui
+                    .data(|d| d.get_temp::<bool>(secondary_release))
+                    .unwrap_or(false);
                 let mut shortcut = if value.is_null() {
                     super::hotkeys::Shortcut::default()
                 } else {
-                    serde_json::from_value::<super::hotkeys::Shortcut>(value.clone()).unwrap_or_default()
+                    serde_json::from_value::<super::hotkeys::Shortcut>(value.clone())
+                        .unwrap_or_default()
                 };
                 let mode_label = match shortcut.mode {
                     super::hotkeys::Mode::Toggle => "开关",
@@ -230,9 +233,15 @@ impl Fields {
                 } else {
                     format!("未绑定 · {mode_label}")
                 };
-                let response = ui.add_sized([(width - height - 4.0).max(20.0), height], egui::Button::new(text))
+                let response = ui
+                    .add_sized(
+                        [(width - height - 4.0).max(20.0), height],
+                        egui::Button::new(text),
+                    )
                     .on_hover_text("左键录入 · 右键切换模式");
-                if response.clicked() { waiting = true; }
+                if response.clicked() {
+                    waiting = true;
+                }
                 // While recording, right mouse is a valid binding, not a menu command.
                 if !was_waiting && !suppress_secondary {
                     response.context_menu(|ui| {
@@ -256,25 +265,62 @@ impl Fields {
                     waiting = false;
                 }
                 if waiting {
-                    ui.data_mut(|d| d.insert_temp(egui::Id::new("plugin-key-recording"), true));
+                    ui.data_mut(|d| d.insert_temp(egui::Id::unique("plugin-key-recording"), true));
                     let events = ui.input(|i| i.events.clone());
                     for event in events {
-                        let recorded=match event {
-                            egui::Event::Key{key:egui::Key::Escape,pressed:true,..}=>{waiting=false;break;}
-                            egui::Event::Key{key,physical_key,pressed:true,repeat:false,modifiers}=>super::hotkeys::key_code(physical_key.unwrap_or(key)).map(|key|(key,modifiers)),
-                            egui::Event::PointerButton{button,pressed:true,modifiers,..} if was_waiting=>Some((match button{egui::PointerButton::Primary=>1,egui::PointerButton::Secondary=>2,egui::PointerButton::Middle=>4,egui::PointerButton::Extra1=>5,egui::PointerButton::Extra2=>6},modifiers)),
-                            _=>None,
+                        let recorded = match event {
+                            egui::Event::Key {
+                                key: egui::Key::Escape,
+                                pressed: true,
+                                ..
+                            } => {
+                                waiting = false;
+                                break;
+                            }
+                            egui::Event::Key {
+                                key,
+                                physical_key,
+                                pressed: true,
+                                repeat: false,
+                                modifiers,
+                            } => super::hotkeys::key_code(physical_key.unwrap_or(key))
+                                .map(|key| (key, modifiers)),
+                            egui::Event::PointerButton {
+                                button,
+                                pressed: true,
+                                modifiers,
+                                ..
+                            } if was_waiting => Some((
+                                match button {
+                                    egui::PointerButton::Primary => 1,
+                                    egui::PointerButton::Secondary => 2,
+                                    egui::PointerButton::Middle => 4,
+                                    egui::PointerButton::Extra1 => 5,
+                                    egui::PointerButton::Extra2 => 6,
+                                },
+                                modifiers,
+                            )),
+                            _ => None,
                         };
-                        if let Some((key,modifiers))=recorded {
-                            #[cfg(windows)]
-                            let win=unsafe{windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(91)<0 || windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(92)<0};
+                        if let Some((key, modifiers)) = recorded {
                             // egui does not carry the Super modifier on Linux.
-                            #[cfg(not(windows))]
-                            let win=false;
-                            let binding=super::hotkeys::Binding{key,modifiers:u8::from(modifiers.ctrl)|(u8::from(modifiers.shift)<<1)|(u8::from(modifiers.alt)<<2)|(u8::from(win)<<3)};
-                            if !super::hotkeys::valid(&binding){continue;}
-                            shortcut.binding=Some(binding);shortcut.disabled=false;
-                            value=serde_json::to_value(&shortcut).expect("shortcut");waiting=false;break;
+
+                            let win = false;
+                            let binding = super::hotkeys::Binding {
+                                key,
+                                modifiers: u8::from(modifiers.ctrl)
+                                    | (u8::from(modifiers.shift) << 1)
+                                    | (u8::from(modifiers.alt) << 2)
+                                    | (u8::from(win) << 3),
+                            };
+                            if !super::hotkeys::valid(&binding) {
+                                continue;
+                            }
+                            shortcut.binding = Some(binding);
+                            shortcut.disabled = false;
+                            value = serde_json::to_value(&shortcut).expect("shortcut");
+                            waiting = false;
+                            break;
                         }
                     }
                     ui.ctx()
@@ -370,29 +416,38 @@ impl Fields {
                     serde_json::Value::Number(n) => {
                         let range = field.min.unwrap_or(-f64::MAX)..=field.max.unwrap_or(f64::MAX);
                         if let Some(mut v) = n.as_i64() {
-                            if crate::ui::controls::number_input(ui, egui::vec2(width, height), egui::DragValue::new(&mut v)
-                                        .speed(field.step.unwrap_or(1.0))
-                                        .range(range),
-                                )
-                                .changed()
+                            if crate::ui::controls::number_input(
+                                ui,
+                                egui::vec2(width, height),
+                                egui::DragValue::new(&mut v)
+                                    .speed(field.step.unwrap_or(1.0))
+                                    .range(range),
+                            )
+                            .changed()
                             {
                                 *n = v.into();
                             }
                         } else if let Some(mut v) = n.as_u64() {
-                            if crate::ui::controls::number_input(ui, egui::vec2(width, height), egui::DragValue::new(&mut v)
-                                        .speed(field.step.unwrap_or(1.0))
-                                        .range(range),
-                                )
-                                .changed()
+                            if crate::ui::controls::number_input(
+                                ui,
+                                egui::vec2(width, height),
+                                egui::DragValue::new(&mut v)
+                                    .speed(field.step.unwrap_or(1.0))
+                                    .range(range),
+                            )
+                            .changed()
                             {
                                 *n = v.into();
                             }
                         } else if let Some(mut v) = n.as_f64()
-                            && crate::ui::controls::number_input(ui, egui::vec2(width, height), egui::DragValue::new(&mut v)
-                                        .speed(field.step.unwrap_or(0.01))
-                                        .range(range),
-                                )
-                                .changed()
+                            && crate::ui::controls::number_input(
+                                ui,
+                                egui::vec2(width, height),
+                                egui::DragValue::new(&mut v)
+                                    .speed(field.step.unwrap_or(0.01))
+                                    .range(range),
+                            )
+                            .changed()
                             && let Some(nv) = serde_json::Number::from_f64(v)
                         {
                             *n = nv;

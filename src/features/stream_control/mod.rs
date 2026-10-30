@@ -647,14 +647,14 @@ impl StreamControlHandle {
         &self.clipboard
     }
     // Dropping files onto the remote screen is offered by the Windows viewer only.
-    #[cfg_attr(not(windows), allow(dead_code))]
+    #[allow(dead_code)]
     pub(crate) fn official_file_drop_available(&self) -> bool {
         feature_supported(
             &lock(&self.shared),
             crate::account::feature_ability::Feature::FileDrop,
         ) && self.clipboard.drop_available()
     }
-    #[cfg_attr(not(windows), allow(dead_code))]
+    #[allow(dead_code)]
     pub(crate) fn drop_files(
         &self,
         paths: Vec<std::path::PathBuf>,

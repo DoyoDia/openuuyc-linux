@@ -103,13 +103,13 @@ pub(super) fn show(
     s: &PerformanceSnapshot,
     id: &'static str,
 ) {
-    let key = egui::Id::new((ctx.viewport_id(), id, "performance-trends"));
+    let key = egui::Id::unique((ctx.viewport_id(), id, "performance-trends"));
     let mut panel = ctx.data_mut(|d| d.get_temp::<Panel>(key).unwrap_or_default());
     panel.sample(monitor.history_identity(), s);
     ctx.request_repaint_after(Duration::from_millis(250));
     let width = theme::PERFORMANCE_WIDTH.min((ctx.content_rect().width() - 56.0).max(340.0));
     egui::Window::new("性能监控")
-        .id(egui::Id::new((id, "monitor")))
+        .id(egui::Id::unique((id, "monitor")))
         .anchor(egui::Align2::RIGHT_BOTTOM, [-12.0, -12.0])
         .default_width(width)
         .resizable(false)

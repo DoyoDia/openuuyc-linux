@@ -5,7 +5,7 @@ use std::{cmp, slice};
 
 use libc::ptrdiff_t;
 use strum::FromRepr;
-use zerocopy::{AsBytes, FromBytes};
+use zerocopy::{FromBytes, IntoBytes};
 
 use crate::decoder::cpu::CpuFlags;
 use crate::decoder::enum_map::{enum_map, enum_map_ty, DefaultValue};
@@ -220,14 +220,16 @@ fn splat_dc<BD: BitDepth>(
         for y in 0..height {
             let dst = dst + y * dst.pixel_stride::<BD>();
             let dst = &mut *dst.slice_mut::<BD>(width);
-            let dst = FromBytes::mut_slice_from(AsBytes::as_bytes_mut(dst)).unwrap();
+            let dst: &mut [[BD::Pixel; 8]] =
+                FromBytes::mut_from_bytes(IntoBytes::as_mut_bytes(dst)).unwrap();
             dst.fill([dc; 8]);
         }
     } else {
         for y in 0..height {
             let dst = dst + y * dst.pixel_stride::<BD>();
             let dst = &mut *dst.slice_mut::<BD>(width);
-            let dst = FromBytes::mut_slice_from(AsBytes::as_bytes_mut(dst)).unwrap();
+            let dst: &mut [[BD::Pixel; 4]] =
+                FromBytes::mut_from_bytes(IntoBytes::as_mut_bytes(dst)).unwrap();
             dst.fill([dc; 4]);
         }
     };

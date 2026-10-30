@@ -1,7 +1,6 @@
 use super::process::lock;
 use super::*;
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
+
 use std::{
     process::{Child, Command, Stdio},
     sync::{
@@ -245,8 +244,7 @@ impl Loader {
                         .stdin(Stdio::piped())
                         .stdout(Stdio::piped())
                         .stderr(Stdio::null());
-                    #[cfg(windows)]
-                    command.creation_flags(0x08000000);
+
                     crate::diagnostics::logging::configure_child(&mut command);
                     let mut spawned = command.spawn()?;
                     let job = match super::process::Job::attach(&spawned) {

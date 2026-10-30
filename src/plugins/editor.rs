@@ -374,7 +374,7 @@ impl Editor {
         };
         let mut discard = false;
         let mut cancel = false;
-        let response = egui::Modal::new(egui::Id::new("graph-unsaved-changes"))
+        let response = egui::Modal::new(egui::Id::unique("graph-unsaved-changes"))
             .frame(crate::ui::controls::dialog_frame())
             .show(ctx, |ui| {
                 ui.set_width(360.0);
@@ -677,7 +677,7 @@ impl Editor {
         let accent = node_accent(&payload.node.type_id, ty);
         let painter = ui.ctx().layer_painter(egui::LayerId::new(
             egui::Order::Tooltip,
-            ui.id().with("library-preview"),
+            ui.scope_id().with("library-preview"),
         ));
         if inside {
             let size = node_size(&payload.node, catalog, &[]) * transform.scaling;
@@ -784,7 +784,7 @@ impl Editor {
             scaling: self.zoom,
             translation: rect.min.to_vec2() + self.pan,
         };
-        let layer = egui::LayerId::new(ui.layer_id().order, ui.id().with("node-world"));
+        let layer = egui::LayerId::new(ui.layer_id().order, ui.scope_id().with("node-world"));
         ui.ctx().set_sublayer(ui.layer_id(), layer);
         ui.ctx().set_transform_layer(layer, transform);
         let world_rect = transform.inverse() * rect;
@@ -800,7 +800,7 @@ impl Editor {
         world.spacing_mut().item_spacing = Vec2::ZERO;
         let response = world.interact(
             world_rect,
-            world.id().with("background"),
+            world.scope_id().with("background"),
             Sense::click_and_drag(),
         );
         self.world_canvas(&mut world, world_rect, response, transform.inverse());
@@ -955,7 +955,7 @@ impl Editor {
             let base = crate::ui::theme::SURFACE;
             let body = ui.interact(
                 r.intersect(rect),
-                ui.id().with((&node.id, "body")),
+                ui.scope_id().with((&node.id, "body")),
                 Sense::click(),
             );
             if body.clicked() {
@@ -1014,7 +1014,7 @@ impl Editor {
             );
             let nr = ui.interact(
                 header.intersect(rect),
-                ui.id().with((&node.id, "header")),
+                ui.scope_id().with((&node.id, "header")),
                 Sense::click_and_drag(),
             );
             if nr.clicked() {
@@ -1079,7 +1079,7 @@ impl Editor {
                 .galley(description_rect.min, galley, crate::ui::theme::MUTED);
             ui.interact(
                 description_rect.intersect(rect),
-                ui.id().with((&node.id, "description")),
+                ui.scope_id().with((&node.id, "description")),
                 Sense::hover(),
             )
             .on_hover_text(description);
@@ -1288,7 +1288,7 @@ impl Editor {
                 let key = (edge.id.clone(), index);
                 let response = ui.interact(
                     Rect::from_center_size(pos, Vec2::splat(16. * inverse.scaling)),
-                    ui.id().with(("reroute", &edge.id, index)),
+                    ui.scope_id().with(("reroute", &edge.id, index)),
                     Sense::click_and_drag(),
                 );
                 painter.circle_filled(
@@ -1346,7 +1346,7 @@ impl Editor {
             painter.circle_filled(*pos, 4.5, color(kind));
             let pr = ui.interact(
                 Rect::from_center_size(*pos, Vec2::splat(16.0)),
-                ui.id().with((&port.node, &port.port, *output)),
+                ui.scope_id().with((&port.node, &port.port, *output)),
                 Sense::click_and_drag(),
             );
             if pr.drag_started() {

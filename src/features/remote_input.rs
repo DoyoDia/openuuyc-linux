@@ -176,7 +176,7 @@ type AssistOwner = (u64, Arc<dyn Fn() -> bool + Send + Sync>);
 
 // Only the Linux viewer samples controllers so far (SDL2); the Windows
 // controller has no collector yet, see README's 功能矩阵.
-#[cfg_attr(windows, allow(dead_code))]
+
 struct GamepadFeedback {
     owner: u64,
     epoch: u64,
@@ -443,7 +443,7 @@ impl RemoteInput {
     /// Full gamepad states share the keyboard/mouse owner and reliable epoch.
     // Only the Linux viewer samples controllers so far (SDL2); the Windows
     // controller has no collector yet, see README's 功能矩阵.
-    #[cfg_attr(windows, allow(dead_code))]
+
     pub(crate) fn gamepad(&self, owner: u64, event: GamepadEvent) -> bool {
         let index = event.index();
         if index >= MAX_GAMEPADS {
@@ -563,7 +563,7 @@ impl RemoteInput {
 
     // Only the Linux viewer samples controllers so far (SDL2); the Windows
     // controller has no collector yet, see README's 功能矩阵.
-    #[cfg_attr(windows, allow(dead_code))]
+
     pub(crate) fn gamepad_vibration(&self, owner: u64, index: u8) -> Option<(u16, u16)> {
         let s = self.lock();
         if index >= MAX_GAMEPADS
@@ -625,7 +625,7 @@ impl RemoteInput {
     /// process, and retrying would only swing the mode back and forth.
     /// Only an X11/Wayland pointer grab can be refused by another client;
     /// the Windows player's raw-input capture has no such failure.
-    #[cfg_attr(windows, allow(dead_code))]
+
     pub fn set_relative_available(&self, available: bool) {
         let mut s = self.lock();
         if s.relative_denied != available {

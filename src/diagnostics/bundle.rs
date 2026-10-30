@@ -140,15 +140,7 @@ fn cancelled(cancel: &AtomicBool) -> Result<()> {
 /// Not a link: a reparse point on Windows; `symlink_metadata` already
 /// reports a symbolic link as such elsewhere.
 fn plain(m: &fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        m.file_attributes() & 0x400 == 0
-    }
-    #[cfg(not(windows))]
-    {
-        !m.file_type().is_symlink()
-    }
+    { !m.file_type().is_symlink() }
 }
 fn regular(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|m| m.is_file() && plain(&m))
@@ -241,12 +233,7 @@ fn export(
             // from a shared read handle, and keep it through rotation/deletion.
             let mut options = OpenOptions::new();
             options.read(true);
-            #[cfg(windows)]
-            {
-                use std::os::windows::fs::OpenOptionsExt;
-                options.share_mode(1 | 2 | 4).custom_flags(0x00200000);
-            }
-            #[cfg(unix)]
+
             std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NOFOLLOW);
             match options.open(&path) {
                 Ok(file) => match file.metadata() {
@@ -272,32 +259,7 @@ fn export(
         warnings.push("硬件摘要读取失败".into());
     }
     cancelled(cancel)?;
-    #[cfg(windows)]
-    {
-        use crate::platform::windows::components::{self, Kind};
-        let mut components = serde_json::Map::new();
-        for (label, kind) in [
-            ("service", Kind::HostService),
-            ("input", Kind::InputDriver),
-            ("display", Kind::DisplayDriver),
-            ("audio", Kind::AudioDriver),
-        ] {
-            cancelled(cancel)?;
-            *progress.lock().unwrap_or_else(|e| e.into_inner()) = Progress {
-                stage: "正在检查组件状态".into(),
-                completed: components.len() as u64,
-                total: 4,
-            };
-            components.insert(
-                label.into(),
-                match components::status(kind) {
-                    Ok(s) => json!({"installed":s.installed,"ready":s.ready,"status":s.label}),
-                    Err(_) => json!({"status":"unavailable"}),
-                },
-            );
-        }
-        input.summary["components"] = components.into();
-    }
+
     input.summary["application"] = json!({"version":env!("CARGO_PKG_VERSION"),"architecture":std::env::consts::ARCH,"logging":snapshot.settings,"dropped_logs":snapshot.dropped});
     for key in ["USERNAME", "USERPROFILE", "USER", "HOME"] {
         if let Ok(value) = std::env::var(key) {

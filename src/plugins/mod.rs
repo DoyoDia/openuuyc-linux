@@ -15,17 +15,11 @@ mod watch;
 
 // The node-graph video pipeline is driven by the Windows player only; the
 // Linux player has no effect chain yet.
-#[cfg(windows)]
-pub(crate) use chain::Controller;
+
 pub(crate) use manager::Manager;
-#[cfg(windows)]
-pub(crate) use parameters::capturing as capturing_shortcut;
-#[cfg(windows)]
-pub(crate) use process::Sample;
+
 pub(crate) use process::Shared;
 pub(crate) use ui::paint_plugin_icon;
-#[cfg(windows)]
-pub(crate) use video::{ChainShared, Graph, Tap};
 
 use anyhow::{Context, Result, ensure};
 use openuuyc_plugin_api as sdk;
@@ -87,8 +81,7 @@ impl Manifest {
     }
 }
 pub(crate) fn root() -> Result<PathBuf> {
-    let adjacent = crate::application::bootstrap::resource_origin()
-        .unwrap_or(std::env::current_exe()?)
+    let adjacent = std::env::current_exe()?
         .parent()
         .context("missing executable directory")?
         .join("plugins");
@@ -104,29 +97,7 @@ pub(crate) fn open_folder(path: &Path) -> Result<()> {
     // Launch the resolved directory through ShellExecute instead of passing it
     // to explorer.exe as a child-process argument. Explorer may otherwise fall
     // back to its inherited working directory (typically C:\\Users\\<user>).
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        use windows::{
-            Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
-            core::{PCWSTR, w},
-        };
-        let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-        let result = unsafe {
-            ShellExecuteW(
-                None,
-                w!("open"),
-                PCWSTR(path.as_ptr()),
-                None,
-                None,
-                SW_SHOWNORMAL,
-            )
-        };
-        if result.0 as isize <= 32 {
-            anyhow::bail!("打开文件夹失败（{}）", result.0 as isize);
-        }
-    }
-    #[cfg(not(windows))]
+
     {
         let status = std::process::Command::new("xdg-open")
             .arg(&path)
@@ -140,15 +111,6 @@ pub(crate) fn open_folder(path: &Path) -> Result<()> {
 /// Load a plugin library without letting it pull dependencies from elsewhere:
 /// Windows restricts the search path, Linux resolves eagerly into a local scope.
 pub(super) unsafe fn load_plugin_library(path: &Path) -> Result<libloading::Library> {
-    #[cfg(windows)]
-    {
-        // LOAD_WITH_ALTERED_SEARCH_PATH | LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR
-        Ok(unsafe {
-            libloading::os::windows::Library::load_with_flags(path, 0x00000100 | 0x00000800)
-        }?
-        .into())
-    }
-    #[cfg(not(windows))]
     {
         Ok(unsafe {
             libloading::os::unix::Library::open(

@@ -1,7 +1,7 @@
 //! Session-owned Draw execution. Network callbacks never paint or query Windows.
 pub(crate) mod agent;
 // The model only drives the Windows overlay; Linux uses its validation alone.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[allow(dead_code)]
 mod model;
 
 use crate::features::stream_control::{annotation::wire::PbDrawRequestKind, publisher};

@@ -24,24 +24,24 @@ struct State {
     progress: HashMap<Id, u64>,
 }
 fn state_id() -> Id {
-    Id::new("operation-notices")
+    Id::unique("operation-notices")
 }
 fn modal_id() -> Id {
-    Id::new("operation-notice-modal")
+    Id::unique("operation-notice-modal")
 }
 
 /// Use for an explicit operation result; an identical result from a later user
 /// attempt may be shown again after the previous message was acknowledged.
 pub(crate) fn notice(
     ctx: &Context,
-    source: impl egui::AsId,
+    source: impl std::hash::Hash + std::fmt::Debug,
     title: &str,
     icon: DialogIcon,
     message: impl Into<String>,
 ) {
     publish(
         ctx,
-        Id::new(source),
+        Id::unique(source),
         title,
         icon,
         message.into(),
@@ -101,14 +101,14 @@ fn publish(
 
 pub(crate) fn observe_notice(
     ctx: &Context,
-    source: impl egui::AsId,
+    source: impl std::hash::Hash + std::fmt::Debug,
     title: &str,
     icon: DialogIcon,
     message: Option<&str>,
 ) {
     observe(
         ctx,
-        Id::new(source),
+        Id::unique(source),
         title,
         icon,
         message,
@@ -122,13 +122,13 @@ pub(crate) fn observe_notice(
 /// dismiss/escape. The business owner retains the action and its permission checks.
 pub(crate) fn observe_notice_action(
     ctx: &Context,
-    source: impl egui::AsId,
+    source: impl std::hash::Hash + std::fmt::Debug,
     title: &str,
     icon: DialogIcon,
     message: Option<&str>,
     action: &str,
 ) -> Option<bool> {
-    let source = Id::new(source);
+    let source = Id::unique(source);
     observe(ctx, source, title, icon, message, Some(action), true, false);
     ctx.data_mut(|d| {
         d.get_temp_mut_or_default::<State>(state_id())
@@ -263,8 +263,8 @@ pub(crate) fn show_notices(ctx: &Context) {
 }
 
 /// End a transient progress message when its owning operation finishes.
-pub(crate) fn clear_notice(ctx: &Context, source: impl egui::AsId) {
-    clear_by_id(ctx, Id::new(source));
+pub(crate) fn clear_notice(ctx: &Context, source: impl std::hash::Hash + std::fmt::Debug) {
+    clear_by_id(ctx, Id::unique(source));
 }
 
 fn clear_by_id(ctx: &Context, source: Id) {
@@ -279,11 +279,11 @@ fn clear_by_id(ctx: &Context, source: Id) {
 
 pub(crate) fn progress_notice(
     ctx: &Context,
-    source: impl egui::AsId,
+    source: impl std::hash::Hash + std::fmt::Debug,
     title: &str,
     message: Option<&str>,
 ) {
-    let source = Id::new(source);
+    let source = Id::unique(source);
     if let Some(message) = message {
         observe(
             ctx,
@@ -308,14 +308,14 @@ pub(crate) fn progress_notice(
 
 pub(crate) fn observe_form_notice(
     ctx: &Context,
-    source: impl egui::AsId,
+    source: impl std::hash::Hash + std::fmt::Debug,
     title: &str,
     icon: DialogIcon,
     message: Option<&str>,
 ) {
     observe(
         ctx,
-        Id::new(source),
+        Id::unique(source),
         title,
         icon,
         message,

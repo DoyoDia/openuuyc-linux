@@ -31,7 +31,7 @@ impl Store {
         let directory = crate::platform::paths::local_app_data()
             .context("用户目录不可用")?
             .join("OpenUUYC/file-receive")
-            .join(format!("{:x}", Sha256::digest(scope)));
+            .join(hex::encode(Sha256::digest(scope)));
         let store = Self {
             directory,
             busy: Mutex::default(),
@@ -69,7 +69,7 @@ impl Store {
         );
         Ok(self
             .directory
-            .join(format!("{:x}.json", Sha256::digest(key))))
+            .join(format!("{}.json", hex::encode(Sha256::digest(key)))))
     }
     pub fn reserve_record(self: &Arc<Self>, key: &str) -> Result<Reservation> {
         Reservation::acquire(self.clone(), &self.path(key)?)
@@ -168,14 +168,6 @@ pub(super) fn directory(value: &str) -> Result<PathBuf> {
 /// The identity of a location in the busy set: Windows paths compare
 /// case-insensitively with `\\` separators, Unix paths exactly.
 fn busy_key(path: &Path) -> String {
-    #[cfg(windows)]
-    {
-        path.to_string_lossy()
-            .replace('/', "\\")
-            .trim_end_matches('\\')
-            .to_lowercase()
-    }
-    #[cfg(not(windows))]
     {
         let key = path.to_string_lossy();
         let trimmed = key.trim_end_matches('/');
@@ -193,12 +185,7 @@ fn within(key: &str, parent: &str) -> bool {
 }
 fn parent_locks(path: &Path) -> Result<Vec<File>> {
     let parent = path.parent().context("不能修改磁盘根目录")?;
-    #[cfg(windows)]
-    let root = PathBuf::from(format!(
-        "{}:\\",
-        path.to_string_lossy().as_bytes()[0] as char
-    ));
-    #[cfg(not(windows))]
+
     let root = PathBuf::from("/");
     let rel = path.strip_prefix(&root)?;
     ensure!(
@@ -466,7 +453,7 @@ fn remove_tree(path: &Path, stop: &CancellationToken, depth: usize) -> Result<()
     Ok(())
 }
 
-#[cfg(all(test, not(windows)))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -496,52 +483,5 @@ mod tests {
             reply_directory(":/Default", "C:\\Users\\u\\Downloads"),
             "C:\\Users\\u\\Downloads"
         );
-    }
-}
-
-/// `storage::wire_path` is applied to every path a host hands out. On a Windows
-/// host those paths come from `dunce::canonicalize`, `read_dir`, the shell's known
-/// folders, drive roots and `local_path`, which joins component by component, so
-/// they hold no `/` and the replies are exactly what they were before.
-#[cfg(all(test, windows))]
-mod windows_tests {
-    use super::*;
-
-    fn unchanged(path: &str) {
-        assert_eq!(storage::wire_path(path), path, "{path}");
-    }
-
-    #[test]
-    fn host_replies_keep_their_shape() {
-        for entry in super::super::super::service::local_list(":/").unwrap() {
-            unchanged(&entry.full_path);
-        }
-        if let Ok(downloads) = directory(":/Default") {
-            let downloads = downloads.to_string_lossy();
-            assert_eq!(reply_directory(":/Default", &downloads), downloads);
-        }
-
-        let root = storage::canonical_dir(&std::env::temp_dir()).unwrap();
-        let dir = root.join(format!("openuuyc-wire-{}", std::process::id()));
-        std::fs::create_dir_all(dir.join("sub")).unwrap();
-        std::fs::write(dir.join("a b.txt"), b"x").unwrap();
-        // A peer may send either separator; what we resolve and list is backslashed.
-        let sent = dir.to_str().unwrap().replace('\\', "/");
-        let resolved = directory(&sent).unwrap();
-        unchanged(&resolved.to_string_lossy());
-        let entries =
-            super::super::super::service::local_list(&resolved.to_string_lossy()).unwrap();
-        assert_eq!(entries.len(), 2);
-        for entry in entries {
-            unchanged(&entry.full_path);
-        }
-        // DirCreate and Rename reply with a path built from `directory`/`local_path`.
-        unchanged(&resolved.join("新建文件夹").to_string_lossy());
-        unchanged(
-            &local_path(&format!("{sent}/sub/renamed"))
-                .unwrap()
-                .to_string_lossy(),
-        );
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

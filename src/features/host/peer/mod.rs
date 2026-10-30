@@ -872,34 +872,7 @@ impl Peer {
         let peer_transport = transport.clone();
         // Only the installed Windows service hosts on behalf of a separate
         // user GUI process.
-        #[cfg(windows)]
-        if crate::platform::host_service::resident::is_owner() {
-            let user_cancel = cancel.clone();
-            let user_lease = handle.clone();
-            stream_tasks.push(tokio::spawn(async move {
-                let mut observed:Option<crate::platform::windows::host_service::user_backend::Observer>=None;
-                loop {
-                    tokio::select!{_=user_cancel.cancelled()=>break,_=tokio::time::sleep(Duration::from_millis(100))=>{}}
-                    if let Some(owner)=&observed {
-                        if !owner.alive() {
-                            // A restarted GUI is a new user execution authority.
-                            // Do not retain old file/clipboard/input operations.
-                            tracing::warn!("user backend exited; retiring controlled connection");
-                            // Retire the execution lease so signaling sends
-                            // clear_out; a bare media cancel leaves viewers
-                            // waiting to reconnect to an invalid old session.
-                            user_lease.finish();
-                            user_cancel.cancel();break;
-                        }
-                    } else {
-                        match crate::platform::windows::host_service::user_backend::observe() {
-                            Ok(owner)=>observed=owner.filter(|owner|owner.alive()),
-                            Err(error)=>{tracing::warn!(%error,"user backend observation failed");user_lease.finish();user_cancel.cancel();break;}
-                        }
-                    }
-                }
-            }));
-        }
+
         construction.disarm();
         Ok(Self {
             activity: Some(crate::platform::host_service::activity::Work::new()),

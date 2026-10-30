@@ -2,12 +2,10 @@
 use super::wake::Wake;
 use super::{Clipboard, Settings, Status};
 use crate::features::drag_drop::{Endpoint, HostPolicy, Role};
-#[cfg(windows)]
-use crate::platform::windows::host_service::{pipe::Pipe, process, vault};
+
 use crate::protocol::peer_platform::PeerPlatform;
 use anyhow::Result;
-#[cfg(windows)]
-use anyhow::ensure;
+
 use serde::{Deserialize, Serialize};
 use std::{
     sync::{Arc, Mutex, mpsc},
@@ -15,8 +13,6 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
-#[cfg(windows)]
-const PREFIX: &str = r"\\.\pipe\OpenUUYC.Clipboard.";
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Policy {
     revision: u64,
@@ -380,9 +376,7 @@ fn worker(
 ) -> Result<()> {
     // Linux has no system service yet: the clipboard always belongs to the
     // desktop user's own process.
-    #[cfg(windows)]
-    let system = vault::sid(std::process::id())? == "S-1-5-18";
-    #[cfg(not(windows))]
+
     let system = false;
     let local = if system {
         None
@@ -479,40 +473,14 @@ fn worker(
         }
         Ok(())
     })();
-    #[cfg(windows)]
-    if let Some(remote) = remote {
-        if result.is_ok() {
-            let _ = super::frame::send(
-                &remote.pipe,
-                Request {
-                    policy: Policy::default(),
-                    platform,
-                    packet: None,
-                    close: true,
-                },
-                || true,
-            );
-        }
-        // An incomplete frame cannot be reused for a close request. Close the
-        // data endpoint before waiting for the independent job-finished reply.
-        let Remote { pipe, agent, .. } = remote;
-        drop(pipe);
-        // Wait for OLE cancellation/retention before closing the job.
-        let _ = agent.finish();
-    }
+
     if stop.is_cancelled() { Ok(()) } else { result }
 }
 
-#[cfg(windows)]
-struct Remote {
-    pipe: Pipe,
-    wake: Option<Wake>,
-    agent: crate::platform::windows::host_service::user_backend::Lease,
-}
 /// The SYSTEM service process, which must hand the clipboard to a user child.
-#[cfg(not(windows))]
+
 enum Remote {}
-#[cfg(not(windows))]
+
 impl Remote {
     fn new(_stop: &CancellationToken) -> Result<Self> {
         anyhow::bail!("Linux 没有系统服务进程")
@@ -524,149 +492,10 @@ impl Remote {
         match *self {}
     }
 }
-#[cfg(windows)]
-impl Remote {
-    fn wake(&self) -> Option<&Wake> {
-        self.wake.as_ref()
-    }
-    fn new(stop: &CancellationToken) -> Result<Self> {
-        let name = format!("{PREFIX}{}", uuid::Uuid::new_v4().simple());
-        let pipe = Pipe::server(&name, true)?;
-        let agent = crate::platform::windows::host_service::user_backend::Lease::connect(
-            crate::platform::windows::host_service::user_backend::Role::Clipboard,
-            &name,
-            process::active_session(),
-            || !stop.is_cancelled(),
-        )?;
-        let until = std::time::Instant::now() + Duration::from_secs(10);
-        pipe.accept(|| !stop.is_cancelled() && agent.alive() && std::time::Instant::now() < until)?;
-        ensure!(
-            pipe.peer_pid(true)? == agent.pid,
-            "剪贴板用户进程身份不匹配"
-        );
-        ensure!(
-            pipe.peer_session(true)? == process::active_session(),
-            "剪贴板用户会话已改变"
-        );
-        Ok(Self {
-            pipe,
-            agent,
-            wake: None,
-        })
-    }
-    fn exchange(&mut self, request: Request, _stop: &CancellationToken) -> Result<Reply> {
-        let permitted = || self.agent.alive();
-        super::frame::send(&self.pipe, request, permitted)?;
-        let reply: Reply = super::frame::receive(&self.pipe, Duration::from_secs(2), permitted)?;
-        if self.wake.is_none()
-            && let Some(name) = &reply.wake
-        {
-            match Wake::open(name) {
-                Ok(wake) => self.wake = Some(wake),
-                Err(error) => {
-                    tracing::warn!(%error, "clipboard queue event unavailable; retaining idle polling")
-                }
-            }
-        }
-        Ok(reply)
-    }
-}
-
-#[cfg(windows)]
-pub(crate) fn run(name: &str, parent: u32) -> Result<()> {
-    ensure!(
-        name.starts_with(PREFIX) && name.len() < 150,
-        "剪贴板会话管道无效"
-    );
-    ensure!(
-        vault::sid(std::process::id())? != "S-1-5-18",
-        "剪贴板不能使用系统权限"
-    );
-    let pipe = Pipe::client(name)?.ok_or_else(|| anyhow::anyhow!("剪贴板会话已结束"))?;
-    ensure!(pipe.peer_pid(false)? == parent, "剪贴板父进程身份不匹配");
-    let session = process::session(std::process::id())?;
-    // A normal user cannot OpenProcess on the SYSTEM resident. Windows supplies
-    // the authenticated pipe peer identity without granting process/token access.
-    // The privileged parent independently accepts only its own newly spawned PID.
-    ensure!(pipe.peer_session(false)? == session, "剪贴板用户会话不匹配");
-    let permitted = || {
-        crate::platform::windows::host_service::user_backend::permitted()
-            && process::active_session() == session
-            && pipe.queued_bytes().is_ok()
-    };
-    let mut local = None;
-    let (wake, mut wake_name) = match Wake::named() {
-        Ok((wake, name)) => (Arc::new(wake), Some(name)),
-        Err(error) => {
-            tracing::warn!(%error, "clipboard queue event unavailable; retaining idle polling");
-            (Arc::new(Wake::new()?), None)
-        }
-    };
-    let result = (|| -> Result<()> {
-        while permitted() {
-            let request: Request = super::frame::receive(&pipe, Duration::from_secs(3), permitted)?;
-            if request.close {
-                break;
-            }
-            if local.is_none() {
-                local = Some(Local::new(request.platform, wake.clone())?);
-            }
-            let local = local.as_ref().unwrap();
-            local.update(request.policy)?;
-            if let Some(packet) = request.packet {
-                ensure!(packet.len() < 524288, "剪贴板IPC消息过大");
-                local.receive(&packet)?;
-            }
-            super::frame::send(
-                &pipe,
-                Reply {
-                    wake: wake_name.take(),
-                    packet: local.packet(),
-                    status: local.status(),
-                },
-                permitted,
-            )?;
-        }
-        Ok(())
-    })();
-    drop(local);
-    if !crate::platform::windows::host_service::user_backend::active() {
-        crate::features::clipboard::shutdown();
-    }
-    result
-}
 
 /// An unlocked desktop. X11 cannot tell a screen locker from any other
 /// client, so only a session that reports itself locked is refused.
-#[cfg(not(windows))]
+
 pub(crate) fn desktop_available() -> bool {
     crate::platform::capture::session_locked() != Some(true)
-}
-#[cfg(windows)]
-pub(crate) fn desktop_available() -> bool {
-    use windows::Win32::{Foundation::HANDLE, System::StationsAndDesktops::*};
-    if process::session(std::process::id()).ok() != Some(process::active_session()) {
-        return false;
-    }
-    if crate::platform::capture::session_locked() != Some(false) {
-        return false;
-    }
-    unsafe {
-        let Ok(desktop) = OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_READOBJECTS)
-        else {
-            return false;
-        };
-        let mut name = [0u16; 128];
-        let result = GetUserObjectInformationW(
-            HANDLE(desktop.0),
-            UOI_NAME,
-            Some(name.as_mut_ptr().cast()),
-            256,
-            None,
-        );
-        let _ = CloseDesktop(desktop);
-        result.is_ok()
-            && String::from_utf16_lossy(&name[..name.iter().position(|&c| c == 0).unwrap_or(128)])
-                .eq_ignore_ascii_case("default")
-    }
 }

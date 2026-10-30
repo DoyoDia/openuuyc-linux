@@ -134,21 +134,12 @@ impl ViewingSettingsStore {
         if user_id.is_empty() {
             bail!("无法确定画面设置所属账号");
         }
-        let service = format!(
-            "com.openuuyc.viewing.{:x}",
-            Sha256::digest(user_id.as_bytes())
-        );
-        let audio_service = format!(
-            "com.openuuyc.audio.{:x}",
-            Sha256::digest(user_id.as_bytes())
-        );
+        let service = format!("com.openuuyc.viewing.{}", hex::encode(Sha256::digest(user_id.as_bytes())));
+        let audio_service = format!("com.openuuyc.audio.{}", hex::encode(Sha256::digest(user_id.as_bytes())));
         Ok(Self {
             device: Arc::new(
                 Entry::new(
-                    &format!(
-                        "com.openuuyc.device-preferences.{:x}",
-                        Sha256::digest(user_id.as_bytes())
-                    ),
+                    &format!("com.openuuyc.device-preferences.{}", hex::encode(Sha256::digest(user_id.as_bytes()))),
                     publisher_id,
                 )
                 .map_err(|_| anyhow::anyhow!("设备偏好存储不可用"))?,
@@ -163,10 +154,7 @@ impl ViewingSettingsStore {
             ),
             microphone: Arc::new(
                 Entry::new(
-                    &format!(
-                        "com.openuuyc.microphone.{:x}",
-                        Sha256::digest(user_id.as_bytes())
-                    ),
+                    &format!("com.openuuyc.microphone.{}", hex::encode(Sha256::digest(user_id.as_bytes()))),
                     publisher_id,
                 )
                 .map_err(|_| anyhow::anyhow!("麦克风设置存储不可用"))?,

@@ -24,7 +24,7 @@ pub(crate) fn viewer_fullscreen_handle(ui: &mut egui::Ui) -> (egui::Response, eg
         egui::StrokeKind::Outside,
     );
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "展开全屏操作栏")
+        egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), "展开全屏操作栏")
     });
     (response, hit_rect)
 }
@@ -89,7 +89,7 @@ pub(crate) fn viewer_caption_button(
     if tooltip.is_empty() {
         response.widget_info(|| {
             egui::WidgetInfo::labeled(
-                egui::WidgetType::Button,
+                egui::Role::Button,
                 ui.is_enabled(),
                 match icon {
                     ViewerCaptionIcon::Minimize => "最小化",

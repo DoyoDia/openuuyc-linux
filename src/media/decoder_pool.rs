@@ -30,8 +30,6 @@ pub(crate) struct DecoderPool {
     blocked_reason: Option<String>,
 
     software_slot: Option<std::rc::Rc<crate::media::decoder::software_slot::SoftwareSlot>>,
-
-    writer: Option<crate::platform::surface::D3D11SurfaceWriter>,
 }
 
 pub(crate) struct DecoderTransition {
@@ -51,14 +49,13 @@ impl DecoderPool {
         preference: crate::media::selection::DecoderPreference,
         extra_data: Bytes,
     ) -> Self {
-        let candidates =
-            DecoderCandidate::preferred(codec, preference, decoder.surface_writer().as_ref())
-                .into_iter()
-                .map(|kind| Candidate {
-                    kind,
-                    enabled: true,
-                })
-                .collect::<Vec<_>>();
+        let candidates = DecoderCandidate::preferred(codec, preference)
+            .into_iter()
+            .map(|kind| Candidate {
+                kind,
+                enabled: true,
+            })
+            .collect::<Vec<_>>();
         let active = candidates
             .iter()
             .position(|entry| entry.kind == decoder.candidate())
@@ -66,7 +63,6 @@ impl DecoderPool {
         Self {
             software_slot: decoder.software_slot(),
 
-            writer: decoder.surface_writer(),
             decoder: Some(decoder),
             candidates,
             active,
@@ -172,14 +168,13 @@ impl DecoderPool {
         }
         if codec_changed {
             self.codec = codec;
-            self.candidates =
-                DecoderCandidate::preferred(codec, self.preference, self.writer.as_ref())
-                    .into_iter()
-                    .map(|kind| Candidate {
-                        kind,
-                        enabled: true,
-                    })
-                    .collect();
+            self.candidates = DecoderCandidate::preferred(codec, self.preference)
+                .into_iter()
+                .map(|kind| Candidate {
+                    kind,
+                    enabled: true,
+                })
+                .collect();
             self.active = 0;
             self.format = None;
         }
@@ -303,18 +298,7 @@ impl DecoderPool {
 
             if let Some(format) = format {
                 let supported = match entry.kind {
-                    #[cfg(windows)]
-                    DecoderCandidate::WindowsD3d11 { .. } => {
-                        (format.chroma_format_idc == 1
-                            || matches!(self.codec, VideoCodec::H265 | VideoCodec::Av1)
-                                && format.chroma_format_idc == 3)
-                            && format.bit_depth_luma == format.bit_depth_chroma
-                            && (format.bit_depth_luma == 8
-                                || matches!(self.codec, VideoCodec::H265 | VideoCodec::Av1)
-                                    && format.bit_depth_luma == 10)
-                    }
                     // The VA-API backend reads surfaces back as 8-bit NV12.
-                    #[cfg(not(windows))]
                     DecoderCandidate::LinuxVaapi => {
                         format.chroma_format_idc == 1
                             && format.bit_depth_luma == 8
@@ -342,7 +326,6 @@ impl DecoderPool {
                 height,
                 self.frame_rate,
                 self.extra_data.clone(),
-                self.writer.clone(),
                 self.software_slot.clone(),
             ) {
                 Ok(mut decoder) => {
@@ -355,9 +338,6 @@ impl DecoderPool {
                     }
                     decoder.set_notification(self.notification.clone());
 
-                    if let Some(writer) = decoder.surface_writer() {
-                        self.writer = Some(writer);
-                    }
                     self.active = index;
                     self.decoder = Some(decoder);
                     return true;

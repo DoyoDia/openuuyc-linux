@@ -1,6 +1,5 @@
 use super::*;
-#[cfg(windows)]
-use std::os::windows::{io::AsRawHandle, process::CommandExt};
+
 use std::{
     io::BufRead,
     process::{Child, Command, Stdio},
@@ -10,14 +9,6 @@ use std::{
     },
     thread::JoinHandle,
     time::{Duration, Instant},
-};
-#[cfg(windows)]
-use windows::Win32::{
-    Foundation::{CloseHandle, HANDLE, WAIT_ABANDONED, WAIT_OBJECT_0},
-    System::{
-        JobObjects::*,
-        Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject},
-    },
 };
 
 pub(crate) fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -194,8 +185,7 @@ fn run(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     // CREATE_NO_WINDOW: a Windows child otherwise flashes a console.
-    #[cfg(windows)]
-    command.creation_flags(0x08000000);
+
     crate::diagnostics::logging::configure_child(&mut command);
     let mut child = command.spawn().context("启动插件宿主")?;
     let job = match Job::attach(&child) {
@@ -460,46 +450,18 @@ fn validate(rendered: &sdk::Rendered) -> Result<()> {
     }
     Ok(())
 }
-#[cfg(windows)]
-pub(super) struct Job(HANDLE);
-#[cfg(windows)]
-impl Job {
-    pub(super) fn attach(child: &Child) -> Result<Self> {
-        let job = Self(unsafe { CreateJobObjectW(None, None) }?);
-        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        unsafe {
-            SetInformationJobObject(
-                job.0,
-                JobObjectExtendedLimitInformation,
-                &info as *const _ as _,
-                size_of_val(&info) as u32,
-            )?;
-            AssignProcessToJobObject(job.0, HANDLE(child.as_raw_handle()))?;
-        }
-        Ok(job)
-    }
-}
-#[cfg(windows)]
-impl Drop for Job {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = CloseHandle(self.0);
-        }
-    }
-}
 
 /// Linux has no job object; the host kills the plugin process itself so a
 /// crashed or detached child cannot outlive the session that spawned it.
-#[cfg(not(windows))]
+
 pub(super) struct Job(u32);
-#[cfg(not(windows))]
+
 impl Job {
     pub(super) fn attach(child: &Child) -> Result<Self> {
         Ok(Self(child.id()))
     }
 }
-#[cfg(not(windows))]
+
 impl Drop for Job {
     fn drop(&mut self) {
         // SIGKILL matches JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: no cleanup chance,
@@ -507,42 +469,11 @@ impl Drop for Job {
         unsafe { libc::kill(self.0 as libc::pid_t, libc::SIGKILL) };
     }
 }
-#[cfg(windows)]
-pub(super) struct AnalysisSlot(HANDLE);
-#[cfg(windows)]
-impl AnalysisSlot {
-    pub fn acquire() -> Result<Self> {
-        for index in 1..=4 {
-            let name: Vec<u16> = format!("Local\\OpenUUYC.AnalysisPlugin.{index}\0")
-                .encode_utf16()
-                .collect();
-            let handle =
-                unsafe { CreateMutexW(None, false, windows::core::PCWSTR(name.as_ptr())) }?;
-            let status = unsafe { WaitForSingleObject(handle, 0) };
-            if status == WAIT_OBJECT_0 || status == WAIT_ABANDONED {
-                return Ok(Self(handle));
-            }
-            unsafe {
-                let _ = CloseHandle(handle);
-            }
-        }
-        anyhow::bail!("同时运行的分析分支已达到4个")
-    }
-}
-#[cfg(windows)]
-impl Drop for AnalysisSlot {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = ReleaseMutex(self.0);
-            let _ = CloseHandle(self.0);
-        }
-    }
-}
 
 /// Four cross-process analysis branches, reserved with advisory file locks.
-#[cfg(not(windows))]
+
 pub(super) struct AnalysisSlot(std::fs::File);
-#[cfg(not(windows))]
+
 impl AnalysisSlot {
     pub fn acquire() -> Result<Self> {
         let base = std::env::var_os("XDG_RUNTIME_DIR")
@@ -569,7 +500,7 @@ impl AnalysisSlot {
         anyhow::bail!("同时运行的分析分支已达到4个")
     }
 }
-#[cfg(not(windows))]
+
 impl Drop for AnalysisSlot {
     fn drop(&mut self) {
         let _ = self.0.unlock();

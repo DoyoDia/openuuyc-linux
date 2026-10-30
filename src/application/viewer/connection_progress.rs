@@ -147,7 +147,7 @@ impl ConnectionProgressApp {
                         }
                         viewport.min.y
                     });
-                if (records.inner - records.state.offset.y).abs() > 0.5 {
+                if (records.inner - records.state.clamped_offset().y).abs() > 0.5 {
                     ui.ctx()
                         .request_discard("connection records moved after layout");
                 }

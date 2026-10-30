@@ -9,8 +9,6 @@ enum Tab {
     Publication,
     Encoding,
     // The decode check exercises DXVA11 adapters.
-    #[cfg(windows)]
-    Decoding,
     Sessions,
     Wol,
 }
@@ -25,12 +23,11 @@ pub(super) struct ViewState {
     wol_error: Option<String>,
     /// 虚拟屏辅助程序的状态。探测要连一次套接字，所以放到后台线程；这个状态是人
     /// 手动装/启服务改出来的，几秒问一次就够。
-    #[cfg(not(windows))]
     virtual_display: Option<crate::platform::virtual_display::Availability>,
-    #[cfg(not(windows))]
+
     virtual_display_probe:
         Option<std::sync::mpsc::Receiver<crate::platform::virtual_display::Availability>>,
-    #[cfg(not(windows))]
+
     virtual_display_checked: Option<std::time::Instant>,
 }
 
@@ -54,8 +51,6 @@ impl DeviceCenterApp {
                     (Tab::Device, "设备概览"),
                     (Tab::Publication, "设备上报"),
                     (Tab::Encoding, "编码能力"),
-                    #[cfg(windows)]
-                    (Tab::Decoding, "解码检查"),
                     (Tab::Sessions, "当前会话"),
                     (Tab::Wol, "远程开机"),
                 ] {
@@ -78,8 +73,7 @@ impl DeviceCenterApp {
                         Tab::Device => self.diagnostic_device(ui),
                         Tab::Publication => self.diagnostic_publication(ui),
                         Tab::Encoding => self.diagnostic_encoding(ui),
-                        #[cfg(windows)]
-                        Tab::Decoding => self.diagnostic_decoding(ui),
+
                         Tab::Sessions => self.diagnostic_sessions(ui),
                         Tab::Wol => self.diagnostic_wol(ui),
                     }
@@ -194,14 +188,14 @@ impl DeviceCenterApp {
         for value in &self.diagnostics.graphics {
             diagnostics_row(ui, "渲染设备", value);
         }
-        #[cfg(not(windows))]
+
         self.virtual_display_row(ui);
     }
 
     /// 「虚拟显示器」这一行：装没装、能不能用、最多几块。
     ///
     /// 探活会连一次辅助程序的套接字（必要时把它拉起来），所以不能放在绘制线程里等。
-    #[cfg(not(windows))]
+
     fn virtual_display_row(&mut self, ui: &mut egui::Ui) {
         use crate::platform::virtual_display;
         let state = &mut self.center_ui.diagnostics;
@@ -481,117 +475,6 @@ impl DeviceCenterApp {
             &["编码", "色彩", "位深", "尺寸上限"],
             &rows,
             |_, _| TEXT,
-        );
-    }
-
-    #[cfg(windows)]
-    fn diagnostic_decoding(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            let busy = self.diagnostics.busy();
-            if crate::ui::controls::diagnostics_action(
-                ui,
-                busy || !self.has_viewers(),
-                if busy { "停止检查" } else { "完整检查" },
-            )
-            .clicked()
-            {
-                if busy {
-                    self.diagnostics.cancel_probe();
-                } else {
-                    self.diagnostics.probe(self.local_display);
-                }
-            }
-        });
-        ui.add_space(theme::DIAGNOSTICS_GAP);
-        let Some(report) = self.diagnostics.probe.as_ref() else {
-            return;
-        };
-        let total: usize = report
-            .backends
-            .iter()
-            .flat_map(|b| &b.rows)
-            .map(|r| r.cells.len())
-            .sum();
-        let done = report
-            .backends
-            .iter()
-            .flat_map(|b| &b.rows)
-            .flat_map(|r| &r.cells)
-            .filter(|c| c.status != crate::media::decoder::diagnostics::Status::Pending)
-            .count();
-        diagnostics_row(
-            ui,
-            "检查状态",
-            &if self.diagnostics.busy() {
-                format!("已处理 {done} / {total}")
-            } else {
-                report.message.clone()
-            },
-        );
-        if report.backends.is_empty() {
-            return;
-        }
-        self.center_ui.diagnostics.decoder = self
-            .center_ui
-            .diagnostics
-            .decoder
-            .min(report.backends.len() - 1);
-        ui.horizontal(|ui| {
-            crate::ui::controls::diagnostics_label(ui, "解码器");
-            egui::ComboBox::from_id_salt("diagnostics-decoder")
-                .width(ui.available_width())
-                .selected_text(&report.backends[self.center_ui.diagnostics.decoder].name)
-                .show_ui(ui, |ui| {
-                    for (index, backend) in report.backends.iter().enumerate() {
-                        ui.selectable_value(
-                            &mut self.center_ui.diagnostics.decoder,
-                            index,
-                            &backend.name,
-                        );
-                    }
-                });
-        });
-        let backend = &report.backends[self.center_ui.diagnostics.decoder];
-        diagnostics_row(ui, "处理设备", backend.device.as_deref().unwrap_or("CPU"));
-        ui.add_space(theme::DIAGNOSTICS_GAP);
-        let mut headers = vec!["格式".to_owned()];
-        headers.extend(backend.sizes.iter().map(|&(w, h)| match (w, h) {
-            (1280, 720) => "720p".to_owned(),
-            (1920, 1080) => "1080p".to_owned(),
-            (2560, 1440) => "1440p".to_owned(),
-            (3840, 2160) => "4K".to_owned(),
-            _ => format!("{w}×{h}"),
-        }));
-        let rows: Vec<_> = backend
-            .rows
-            .iter()
-            .map(|r| {
-                std::iter::once(r.format.clone())
-                    .chain(
-                        r.cells
-                            .iter()
-                            .map(|c| format!("{}\n{}", c.status.label(), c.detail)),
-                    )
-                    .collect()
-            })
-            .collect();
-        diagnostics_table(
-            ui,
-            &headers.iter().map(String::as_str).collect::<Vec<_>>(),
-            &rows,
-            |row, column| {
-                use crate::media::decoder::diagnostics::Status;
-                if column == 0 {
-                    return TEXT;
-                }
-                match backend.rows[row].cells[column - 1].status {
-                    Status::Passed => theme::GREEN,
-                    Status::Failed => theme::RED,
-                    Status::Busy => theme::AMBER,
-                    Status::Pending => theme::ACCENT,
-                    Status::Unsupported | Status::Unchecked => theme::MUTED,
-                }
-            },
         );
     }
 

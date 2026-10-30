@@ -26,7 +26,6 @@ impl Mode {
             Self::Gui => "程序浮窗",
             // The variant keeps its stored name; Linux delivers it through
             // the desktop's notification service.
-            Self::Windows if cfg!(windows) => "Windows 通知",
             Self::Windows => "系统通知",
             Self::Both => "两者同时",
         }

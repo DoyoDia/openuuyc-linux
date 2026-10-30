@@ -122,7 +122,7 @@ pub(crate) fn dialog_header(
         TEXT,
     );
     let close = if closable {
-        let response = ui.interact(close_rect, ui.id().with("dialog-close"), Sense::click());
+        let response = ui.interact(close_rect, ui.scope_id().with("dialog-close"), Sense::click());
         if response.hovered() {
             ui.painter()
                 .rect_filled(close_rect, theme::CONTROL_RADIUS, HOVER);
@@ -132,7 +132,7 @@ pub(crate) fn dialog_header(
             close_rect,
             if response.hovered() { TEXT } else { MUTED },
         );
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "关闭"));
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "关闭"));
         response.on_hover_text("关闭").clicked()
     } else {
         false

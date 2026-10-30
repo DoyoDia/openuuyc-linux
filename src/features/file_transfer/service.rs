@@ -917,21 +917,8 @@ fn pause_queued(repo: &Repository) -> Result<()> {
 
 pub(super) fn local_list(path: &str) -> Result<Vec<FileEntry>> {
     if path == ":/" {
-        #[cfg(windows)]
-        let mut entries: Vec<_> = ('A'..='Z')
-            .filter_map(|c| {
-                let path = format!("{c}:\\");
-                PathBuf::from(&path).is_dir().then(|| FileEntry {
-                    entry_type: 3,
-                    name: format!("({c}:)"),
-                    full_path: path,
-                    icon_type: "disk".into(),
-                    ..Default::default()
-                })
-            })
-            .collect();
         // Unix has one tree; its root takes the place of the drive list.
-        #[cfg(not(windows))]
+
         let mut entries = vec![FileEntry {
             entry_type: 3,
             name: "文件系统 (/)".into(),

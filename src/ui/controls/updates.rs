@@ -101,7 +101,7 @@ pub(crate) fn update_actions(
 
 pub(crate) fn update_prepared_notice(ctx: &egui::Context) -> bool {
     let mut postpone = false;
-    egui::Area::new(egui::Id::new("remote-update-prepared"))
+    egui::Area::new(egui::Id::unique("remote-update-prepared"))
         .anchor(Align2::CENTER_BOTTOM, vec2(0.0, -24.0))
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {

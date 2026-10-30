@@ -372,7 +372,7 @@ impl DeviceCenterApp {
     pub(super) fn assist_dialogs(&mut self, ctx: &egui::Context) {
         if let Some(message) = &self.assist.error_dialog {
             let mut close = false;
-            let response = egui::Modal::new(egui::Id::new("assist-error"))
+            let response = egui::Modal::new(egui::Id::unique("assist-error"))
                 .frame(dialog_frame())
                 .show(ctx, |ui| {
                     ui.set_width(400.0);
@@ -398,7 +398,7 @@ impl DeviceCenterApp {
         if let Some(mut pending) = self.assist.password_prompt.take() {
             let mut submit = false;
             let mut cancel = false;
-            let response = egui::Modal::new(egui::Id::new("assist-password"))
+            let response = egui::Modal::new(egui::Id::unique("assist-password"))
                 .frame(dialog_frame())
                 .show(ctx, |ui| {
                     ui.set_width(360.0);
@@ -449,7 +449,7 @@ impl DeviceCenterApp {
         if let Some(mut edit) = self.assist.favorite_editor.take() {
             let mut submit = false;
             let mut cancel = false;
-            let response = egui::Modal::new(egui::Id::new("assist-favorite-editor"))
+            let response = egui::Modal::new(egui::Id::unique("assist-favorite-editor"))
                 .frame(dialog_frame())
                 .show(ctx, |ui| {
                     ui.set_width(380.0);
@@ -518,7 +518,7 @@ impl DeviceCenterApp {
         if let Some(prompt) = self.assist.delete_prompt.take() {
             let mut submit = false;
             let mut cancel = false;
-            let response = egui::Modal::new(egui::Id::new("assist-delete-record"))
+            let response = egui::Modal::new(egui::Id::unique("assist-delete-record"))
                 .frame(dialog_frame())
                 .show(ctx, |ui| {
                     ui.set_width(380.0);

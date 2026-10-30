@@ -195,7 +195,7 @@ impl ClipboardFs {
     fn attr(&self, ino: u64) -> Option<fuser::FileAttr> {
         let node = self.tree.nodes.get(&ino)?;
         Some(fuser::FileAttr {
-            ino,
+            ino: fuser::INodeNo(ino),
             size: node.size,
             blocks: node.size.div_ceil(512),
             atime: node.mtime,
@@ -223,53 +223,57 @@ impl ClipboardFs {
 
 impl fuser::Filesystem for ClipboardFs {
     fn lookup(
-        &mut self,
-        _req: &fuser::Request<'_>,
-        parent: u64,
+        &self,
+        _req: &fuser::Request,
+        parent: fuser::INodeNo,
         name: &OsStr,
         reply: fuser::ReplyEntry,
     ) {
         let Some(name) = name.to_str() else {
-            reply.error(libc::ENOENT);
+            reply.error(fuser::Errno::ENOENT);
             return;
         };
-        match self.tree.child(parent, name).and_then(|ino| self.attr(ino)) {
-            Some(attr) => reply.entry(&TTL, &attr, 0),
-            None => reply.error(libc::ENOENT),
+        match self
+            .tree
+            .child(parent.0, name)
+            .and_then(|ino| self.attr(ino))
+        {
+            Some(attr) => reply.entry(&TTL, &attr, fuser::Generation(0)),
+            None => reply.error(fuser::Errno::ENOENT),
         }
     }
 
     fn getattr(
-        &mut self,
-        _req: &fuser::Request<'_>,
-        ino: u64,
-        _fh: Option<u64>,
+        &self,
+        _req: &fuser::Request,
+        ino: fuser::INodeNo,
+        _fh: Option<fuser::FileHandle>,
         reply: fuser::ReplyAttr,
     ) {
-        match self.attr(ino) {
+        match self.attr(ino.0) {
             Some(attr) => reply.attr(&TTL, &attr),
-            None => reply.error(libc::ENOENT),
+            None => reply.error(fuser::Errno::ENOENT),
         }
     }
 
     fn readdir(
-        &mut self,
-        _req: &fuser::Request<'_>,
-        ino: u64,
-        _fh: u64,
-        offset: i64,
+        &self,
+        _req: &fuser::Request,
+        ino: fuser::INodeNo,
+        _fh: fuser::FileHandle,
+        offset: u64,
         mut reply: fuser::ReplyDirectory,
     ) {
-        let Some(node) = self.tree.nodes.get(&ino) else {
-            reply.error(libc::ENOENT);
+        let Some(node) = self.tree.nodes.get(&ino.0) else {
+            reply.error(fuser::Errno::ENOENT);
             return;
         };
         if !node.is_dir() {
-            reply.error(libc::ENOTDIR);
+            reply.error(fuser::Errno::ENOTDIR);
             return;
         }
         let mut entries = vec![
-            (ino, fuser::FileType::Directory, ".".to_owned()),
+            (ino.0, fuser::FileType::Directory, ".".to_owned()),
             (node.parent, fuser::FileType::Directory, "..".to_owned()),
         ];
         for child in &node.children {
@@ -284,53 +288,60 @@ impl fuser::Filesystem for ClipboardFs {
                 child_node.name.clone(),
             ));
         }
-        for (position, (ino, kind, name)) in
-            entries.into_iter().enumerate().skip(offset.max(0) as usize)
+        for (position, (ino, kind, name)) in entries
+            .into_iter()
+            .enumerate()
+            .skip(usize::try_from(offset).unwrap_or(usize::MAX))
         {
             // A full buffer is not an error: the kernel asks again from here.
-            if reply.add(ino, position as i64 + 1, kind, name) {
+            if reply.add(fuser::INodeNo(ino), position as u64 + 1, kind, name) {
                 break;
             }
         }
         reply.ok();
     }
 
-    fn open(&mut self, _req: &fuser::Request<'_>, ino: u64, flags: i32, reply: fuser::ReplyOpen) {
-        let Some(node) = self.tree.nodes.get(&ino) else {
-            reply.error(libc::ENOENT);
+    fn open(
+        &self,
+        _req: &fuser::Request,
+        ino: fuser::INodeNo,
+        flags: fuser::OpenFlags,
+        reply: fuser::ReplyOpen,
+    ) {
+        let Some(node) = self.tree.nodes.get(&ino.0) else {
+            reply.error(fuser::Errno::ENOENT);
             return;
         };
         if node.is_dir() {
-            reply.error(libc::EISDIR);
+            reply.error(fuser::Errno::EISDIR);
             return;
         }
-        if flags & (libc::O_WRONLY | libc::O_RDWR) != 0 {
-            reply.error(libc::EACCES);
+        if flags.0 & (libc::O_WRONLY | libc::O_RDWR) != 0 {
+            reply.error(fuser::Errno::EACCES);
             return;
         }
-        reply.opened(0, 0);
+        reply.opened(fuser::FileHandle(0), fuser::FopenFlags::empty());
     }
 
     fn read(
-        &mut self,
-        _req: &fuser::Request<'_>,
-        ino: u64,
-        _fh: u64,
-        offset: i64,
+        &self,
+        _req: &fuser::Request,
+        ino: fuser::INodeNo,
+        _fh: fuser::FileHandle,
+        offset: u64,
         size: u32,
-        _flags: i32,
-        _lock_owner: Option<u64>,
+        _flags: fuser::OpenFlags,
+        _lock_owner: Option<fuser::LockOwner>,
         reply: fuser::ReplyData,
     ) {
-        let Some(node) = self.tree.nodes.get(&ino) else {
-            reply.error(libc::ENOENT);
+        let Some(node) = self.tree.nodes.get(&ino.0) else {
+            reply.error(fuser::Errno::ENOENT);
             return;
         };
         let (Some(index), false) = (node.index, node.is_dir()) else {
-            reply.error(libc::EISDIR);
+            reply.error(fuser::Errno::EISDIR);
             return;
         };
-        let offset = offset.max(0) as u64;
         if offset >= node.size {
             reply.data(&[]);
             return;
@@ -346,7 +357,7 @@ impl fuser::Filesystem for ClipboardFs {
                 Ok(chunk) => data.extend_from_slice(&chunk),
                 Err(error) => {
                     tracing::debug!(%error, index, offset, "读取远端剪贴板文件失败");
-                    reply.error(libc::EIO);
+                    reply.error(fuser::Errno::EIO);
                     return;
                 }
             }
@@ -381,23 +392,21 @@ impl Mount {
             uid: unsafe { libc::getuid() },
             gid: unsafe { libc::getgid() },
         };
-        let session = fuser::spawn_mount2(
-            filesystem,
-            &root,
-            &[
-                fuser::MountOption::FSName("openuuyc-clipboard".to_owned()),
-                fuser::MountOption::Subtype("openuuyc".to_owned()),
-                fuser::MountOption::RO,
-                fuser::MountOption::NoExec,
-                fuser::MountOption::NoSuid,
-                fuser::MountOption::NoDev,
-                fuser::MountOption::NoAtime,
-                // Not `AutoUnmount`: it needs `AllowOther` or `AllowRoot`, and
-                // either would hand the remote's files to every local user. A
-                // mount left behind by a crash is cleared on the next run
-                // instead.
-            ],
-        );
+        let mut config = fuser::Config::default();
+        config.mount_options = vec![
+            fuser::MountOption::FSName("openuuyc-clipboard".to_owned()),
+            fuser::MountOption::Subtype("openuuyc".to_owned()),
+            fuser::MountOption::RO,
+            fuser::MountOption::NoExec,
+            fuser::MountOption::NoSuid,
+            fuser::MountOption::NoDev,
+            fuser::MountOption::NoAtime,
+            // Not `AutoUnmount`: it needs `AllowOther` or `AllowRoot`, and
+            // either would hand the remote's files to every local user. A
+            // mount left behind by a crash is cleared on the next run
+            // instead.
+        ];
+        let session = fuser::spawn_mount(filesystem, &root, &config);
         let session = match session {
             Ok(session) => session,
             Err(error) => {

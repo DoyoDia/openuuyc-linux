@@ -1,7 +1,6 @@
 use super::*;
 
 impl DeviceCenterApp {
-    #[cfg(target_os = "linux")]
     pub(super) fn wayland_authorization_settings(&mut self, ui: &mut egui::Ui) {
         section(ui, "Wayland 屏幕授权");
         let status = crate::platform::linux::capture::restore_status();
@@ -9,34 +8,27 @@ impl DeviceCenterApp {
             ui,
             "本机恢复凭据",
             "首次共享由桌面门户授权；支持持久授权时保存凭据，门户撤销后连接时会重新询问",
-            |ui| {
-                match &status {
-                    Ok(true) => {
-                        ui.label("已保存").on_hover_text(
-                            "这是本机保存的恢复凭据，桌面门户仍可能单独撤销授权。",
-                        );
-                        if ui
-                            .add(crate::ui::controls::secondary("清除授权"))
-                            .clicked()
-                        {
-                            match crate::platform::linux::capture::clear_restore_token() {
-                                Ok(()) => {
-                                    self.status = StatusMessage::success("已清除本机保存的屏幕授权");
-                                }
-                                Err(error) => {
-                                    self.status = StatusMessage::error(format!(
-                                        "清除屏幕授权失败：{error:#}"
-                                    ));
-                                }
+            |ui| match &status {
+                Ok(true) => {
+                    ui.label("已保存")
+                        .on_hover_text("这是本机保存的恢复凭据，桌面门户仍可能单独撤销授权。");
+                    if ui.add(crate::ui::controls::secondary("清除授权")).clicked() {
+                        match crate::platform::linux::capture::clear_restore_token() {
+                            Ok(()) => {
+                                self.status = StatusMessage::success("已清除本机保存的屏幕授权");
+                            }
+                            Err(error) => {
+                                self.status =
+                                    StatusMessage::error(format!("清除屏幕授权失败：{error:#}"));
                             }
                         }
                     }
-                    Ok(false) => {
-                        ui.label("未保存授权");
-                    }
-                    Err(error) => {
-                        ui.colored_label(RED, format!("无法读取授权状态：{error:#}"));
-                    }
+                }
+                Ok(false) => {
+                    ui.label("未保存授权");
+                }
+                Err(error) => {
+                    ui.colored_label(RED, format!("无法读取授权状态：{error:#}"));
                 }
             },
         );
@@ -141,7 +133,7 @@ impl DeviceCenterApp {
         } else {
             6 + 2 * usize::from(terminal_supported)
         };
-        let id = egui::Id::new(("host-access-settings", self.login_generation));
+        let id = egui::Id::unique(("host-access-settings", self.login_generation));
         let mut open = ui.data(|data| data.get_temp::<bool>(id).unwrap_or(false));
         form_row(
             ui,
@@ -236,7 +228,7 @@ impl DeviceCenterApp {
         }
         // A shell is the widest grant on this page: turning it on asks first,
         // and only the confirmation applies it.
-        let confirm_id = egui::Id::new(("host-terminal-confirm", self.login_generation));
+        let confirm_id = egui::Id::unique(("host-terminal-confirm", self.login_generation));
         if terminal && !before.4 {
             terminal = false;
             ui.data_mut(|data| data.insert_temp(confirm_id, true));
@@ -253,7 +245,7 @@ impl DeviceCenterApp {
         }
         // Letting the controller into the local user's own shells asks too.
         let local_confirm_id =
-            egui::Id::new(("host-terminal-local-confirm", self.login_generation));
+            egui::Id::unique(("host-terminal-local-confirm", self.login_generation));
         if terminal_local && !before.6 {
             terminal_local = false;
             ui.data_mut(|data| data.insert_temp(local_confirm_id, true));
@@ -638,7 +630,7 @@ impl DeviceCenterApp {
 /// [`terminal_confirmation`].
 fn terminal_local_confirmation(ctx: &egui::Context) -> Option<bool> {
     let mut decision = None;
-    let response = egui::Modal::new(egui::Id::new("host-terminal-local-confirm"))
+    let response = egui::Modal::new(egui::Id::unique("host-terminal-local-confirm"))
         .frame(crate::ui::controls::dialog_frame())
         .show(ctx, |ui| {
             ui.set_width(410.0);
@@ -673,7 +665,7 @@ fn terminal_local_confirmation(ctx: &egui::Context) -> Option<bool> {
 
 fn terminal_confirmation(ctx: &egui::Context) -> Option<bool> {
     let mut decision = None;
-    let response = egui::Modal::new(egui::Id::new("host-terminal-confirm"))
+    let response = egui::Modal::new(egui::Id::unique("host-terminal-confirm"))
         .frame(crate::ui::controls::dialog_frame())
         .show(ctx, |ui| {
             ui.set_width(410.0);

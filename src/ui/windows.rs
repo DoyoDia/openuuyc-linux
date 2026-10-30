@@ -9,11 +9,10 @@ use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::WindowEvent;
-#[cfg(target_os = "linux")]
+
 use winit::event::{DeviceEvent, DeviceId};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
-#[cfg(windows)]
-use winit::platform::windows::EventLoopBuilderExtWindows;
+
 use winit::window::{Window, WindowId};
 
 /// The longest a destroyed (Wayland) control center waits between UI passes:
@@ -27,11 +26,10 @@ const HIDDEN_MIN_TICK: Duration = Duration::from_millis(50);
 const TRAY_RETRY: Duration = Duration::from_secs(2);
 
 pub(super) fn run(config: WindowConfig, factory: AppFactory) -> Result<()> {
-    #[cfg_attr(not(windows), allow(unused_mut))]
+    #[allow(unused_mut)]
     let mut builder = EventLoop::<Event>::with_user_event();
     // The Windows keyboard hook needs to see raw messages before winit does.
-    #[cfg(windows)]
-    builder.with_msg_hook(crate::application::viewer::desktop_input_message);
+
     let event_loop = builder.build().context("create desktop event loop")?;
     let _input_hook = crate::application::viewer::desktop_input_hook()?;
     let mut runner = Windows {
@@ -40,7 +38,7 @@ pub(super) fn run(config: WindowConfig, factory: AppFactory) -> Result<()> {
             factory: Some(factory),
             state: None,
             hidden: None,
-            #[cfg(target_os = "linux")]
+
             activation: None,
             error: None,
             proxy: event_loop.create_proxy(),
@@ -53,11 +51,11 @@ pub(super) fn run(config: WindowConfig, factory: AppFactory) -> Result<()> {
     window_manager::install(Some(event_loop.create_proxy()));
     // Linux 上这个入口只用来开控制中心主窗口（观看窗口与通知窗口走别的 runner），
     // 所以控制通道跟着它一起建立与撤销。
-    #[cfg(target_os = "linux")]
+
     let _control = super::control::listen()
         .inspect_err(|error| tracing::warn!(error = %format!("{error:#}"), "控制通道不可用"))
         .ok();
-    #[cfg(target_os = "linux")]
+
     if let Err(error) = super::shutdown::install() {
         tracing::warn!(error = %format!("{error:#}"), "退出信号处理不可用");
     }
@@ -107,7 +105,6 @@ struct Runner {
     hidden: Option<Hidden>,
     /// The startup-notification token the next window is created with: a
     /// second start's, when it finds the control center destroyed in the tray.
-    #[cfg(target_os = "linux")]
     activation: Option<winit::window::ActivationToken>,
     error: Option<String>,
     proxy: EventLoopProxy<Event>,
@@ -241,7 +238,7 @@ struct DesktopWindow {
     exiting: bool,
     show_after_present: bool,
     /// Read only on Windows; see its use after the first present.
-    #[cfg_attr(not(windows), allow(dead_code))]
+    #[allow(dead_code)]
     focus_after_present: bool,
     window_move: super::chrome::WindowMoveState,
     window_resize: super::chrome::WindowResizeState,
@@ -270,7 +267,7 @@ impl Runner {
     // Windows always hides in place, so its `Retained` is uninhabited and the
     // compiler rightly sees everything after `Retained::take` as unreachable
     // there; the destroy-and-recreate path exists for Wayland only.
-    #[cfg_attr(windows, allow(unreachable_code, unused_variables, unused_mut))]
+
     fn hide_main(&mut self) {
         let Some(state) = self.state.take() else {
             return;
@@ -373,7 +370,7 @@ impl Runner {
         // the environment, so it gets focus and the launch feedback ends. The
         // variables stay set: removing them now would race the threads already
         // reading the environment, and a spent token is worthless to a child.
-        #[cfg(target_os = "linux")]
+
         let window = {
             use winit::platform::startup_notify::EventLoopExtStartupNotify;
             let token = self.activation.take().or_else(|| {
@@ -383,8 +380,7 @@ impl Runner {
             });
             create_window(&context, event_loop, &viewport_builder, token)?
         };
-        #[cfg(not(target_os = "linux"))]
-        let window = egui_winit::create_window(&context, event_loop, &viewport_builder)?;
+
         let window = Arc::new(window);
         super::chrome::configure_dwm_window(&window);
         super::branding::set_taskbar_icon(&window);
@@ -411,7 +407,7 @@ impl Runner {
                 origin.y + (size.height as i64 - outer.height as i64).max(0) as i32 / 2,
             ));
         }
-        #[cfg(target_os = "linux")]
+
         if self.root && !self.config.notification && !self.config.floating {
             crate::platform::linux::gamescope::fit_control_center(&window);
         }
@@ -505,9 +501,7 @@ impl Runner {
             notification,
             floating: self.config.floating,
         });
-        if self.root {
-            crate::application::bootstrap::ready();
-        }
+        if self.root {}
         let state = self.state.as_mut().expect("created desktop state");
         state.render()?;
         state.app.0.on_focus_changed(state.window.has_focus());
@@ -541,7 +535,7 @@ impl DesktopWindow {
     /// token the window is raised past focus-stealing prevention and the
     /// launch feedback ends; without one, or if that fails, it is shown as
     /// the tray's "打开" shows it.
-    #[cfg(target_os = "linux")]
+
     fn activate(&mut self, token: &crate::platform::linux::startup_notify::LaunchToken) {
         let raised = token.for_window(&self.window).is_some_and(|value| {
             let window = &self.window;
@@ -669,6 +663,10 @@ impl DesktopWindow {
                         .map(egui::Event::Paste),
                     // No current application screen requests framebuffer screenshots.
                     egui_winit::ActionRequested::Screenshot(_) => None,
+                    egui_winit::ActionRequested::PaintWhileHidden => {
+                        self.schedule(Instant::now());
+                        None
+                    }
                 };
                 if let Some(event) = event {
                     self.input.egui_input_mut().events.push(event);
@@ -714,19 +712,6 @@ impl DesktopWindow {
                 self.window.set_visible(true);
                 // X11 and Wayland window managers apply their own focus
                 // policy to a newly mapped window.
-                #[cfg(windows)]
-                if std::mem::take(&mut self.focus_after_present) {
-                    // Respect Windows foreground permission. winit's Windows
-                    // focus_window() synthesizes Alt input; activation here
-                    // needs only the permission granted by our launcher.
-                    if let Ok(hwnd) = super::gfx::window_hwnd(&self.window) {
-                        let activated = unsafe {
-                            windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow(hwnd)
-                        }
-                        .as_bool();
-                        tracing::debug!(activated, "initial window foreground activation");
-                    }
-                }
             }
         } else if !self.close_requested {
             // QR/font updates must survive a minimized window and upload on restore.
@@ -875,7 +860,7 @@ impl ApplicationHandler<Event> for Runner {
 /// startup-notification token when there is one. (egui_winit's own placement
 /// on a numbered monitor only applies to fullscreen viewports, which the shell
 /// windows are not.)
-#[cfg(target_os = "linux")]
+
 fn create_window(
     context: &egui::Context,
     event_loop: &ActiveEventLoop,
@@ -964,7 +949,7 @@ impl ApplicationHandler<Event> for Windows {
         }
         self.retire(event_loop);
     }
-    #[cfg(target_os = "linux")]
+
     fn device_event(&mut self, event_loop: &ActiveEventLoop, device: DeviceId, event: DeviceEvent) {
         // Raw motion has no WindowId. Only the focused viewer may send it;
         // broadcasting it would move the pointer in several remote sessions.
@@ -1008,7 +993,7 @@ impl ApplicationHandler<Event> for Windows {
                     self.main.fail(event_loop, error);
                 }
             }
-            #[cfg(target_os = "linux")]
+
             Event::Request(Request::ActivateMain(token)) => {
                 if let Some(state) = &mut self.main.state {
                     state.activate(&token);
@@ -1064,7 +1049,7 @@ impl ApplicationHandler<Event> for Windows {
                     state: None,
                     // 只有控制中心主窗口会收进托盘。
                     hidden: None,
-                    #[cfg(target_os = "linux")]
+
                     activation: None,
                     error: None,
                     proxy: self.main.proxy.clone(),

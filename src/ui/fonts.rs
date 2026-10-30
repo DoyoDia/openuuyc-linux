@@ -9,8 +9,8 @@ use std::{
 pub(crate) fn definitions() -> FontDefinitions {
     static FONTS: LazyLock<FontDefinitions> = LazyLock::new(|| {
         let mut fonts = FontDefinitions::empty();
-        // Keep egui 0.36.1's exact font set, fallback order and emoji metrics.
-        // Font sources and licenses come from epaint_default_fonts of that version.
+        // Keep the existing font set, fallback order and emoji metrics.
+        // Font sources and licenses come from the matching epaint_default_fonts release.
         macro_rules! font {
             ($name:literal, $scale:expr) => {{
                 let mut bytes = Vec::new();
@@ -56,20 +56,9 @@ pub(crate) fn definitions() -> FontDefinitions {
 
 /// Where the system keeps a font that covers Chinese, best first.
 fn system_cjk_candidates() -> Vec<PathBuf> {
-    #[cfg(windows)]
-    {
-        let directory = std::env::var_os("WINDIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
-            .join("Fonts");
-        ["msyh.ttc", "msyhbd.ttc", "simhei.ttf", "simsun.ttc"]
-            .into_iter()
-            .map(|name| directory.join(name))
-            .collect()
-    }
     // Distributions place CJK fonts under a few well-known names; fontconfig
     // is not linked in, so the list is walked directly.
-    #[cfg(not(windows))]
+
     {
         [
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",

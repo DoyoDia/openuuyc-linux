@@ -6,7 +6,7 @@ impl DeviceCenterApp {
         if !self.updates.dialog_open {
             return;
         }
-        let id = egui::Id::new("client-release-update");
+        let id = egui::Id::unique("client-release-update");
         // Let account confirmations and existing popups finish first.
         if ctx.memory(|memory| memory.top_modal_layer().is_some_and(|layer| layer.id != id))
             || egui::Popup::is_any_open(ctx)
@@ -44,7 +44,7 @@ fn release_prompt(
 ) -> (bool, bool) {
     let mut dismiss = false;
     let mut download = false;
-    let response = egui::Modal::new(egui::Id::new("client-release-update"))
+    let response = egui::Modal::new(egui::Id::unique("client-release-update"))
         .frame(dialog_frame())
         .show(ctx, |ui| {
             ui.set_width(

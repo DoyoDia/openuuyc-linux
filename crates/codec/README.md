@@ -31,8 +31,8 @@ AV1 decoding uses up to four workers with a one-frame delay limit.
 
 The library includes code derived from FFmpeg, OpenH264, OxideAV, Chromium,
 rav1e and rav1d. Keep the notices alongside each kernel; see
-[THIRD_PARTY_NOTICES](../../THIRD_PARTY_NOTICES) for attribution and licenses.
+[NOTICES.md](../../NOTICES.md) for attribution and licenses.
 
-```powershell
+```bash
 cargo test --manifest-path crates/codec/Cargo.toml -p openuuyc-h264 --lib
 ```

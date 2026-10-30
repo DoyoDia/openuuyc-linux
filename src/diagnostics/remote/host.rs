@@ -156,7 +156,7 @@ async fn transfer(
         id,
         Message::Begin {
             size,
-            sha256: format!("{:x}", digest.finalize()),
+            sha256: hex::encode(digest.finalize()),
             logs: exported.logs,
             warnings: exported.warnings,
         },

@@ -174,7 +174,7 @@ impl AnnotationUi {
                 bounds,
             );
             let mut next_position = position;
-            let panel = egui::Area::new(egui::Id::new("annotation-tools"))
+            let panel = egui::Area::new(egui::Id::unique("annotation-tools"))
                 .order(egui::Order::Foreground)
                 .fixed_pos(position)
                 .movable(false)
@@ -379,7 +379,7 @@ impl AnnotationUi {
         }
         let response = ui.interact(
             rect,
-            ui.id().with("annotation-canvas"),
+            ui.scope_id().with("annotation-canvas"),
             Sense::click_and_drag(),
         );
         if response.hovered() {

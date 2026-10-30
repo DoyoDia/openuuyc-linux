@@ -305,7 +305,7 @@ impl Controller {
         }
         let mut close = false;
         egui::Window::new("节点图")
-            .id(egui::Id::new("viewer-plugin-menu"))
+            .id(egui::Id::unique("viewer-plugin-menu"))
             .open(open)
             .title_bar(false)
             .resizable(false)
@@ -459,7 +459,7 @@ impl Controller {
         output.sort_by_key(|o| o.order);
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Background,
-            egui::Id::new("plugin-composite"),
+            egui::Id::unique("plugin-composite"),
         ));
         for item in output {
             painter
@@ -579,7 +579,7 @@ impl Controller {
         if rows.is_empty() {
             return;
         }
-        egui::Area::new(egui::Id::new("plugin-control-status"))
+        egui::Area::new(egui::Id::unique("plugin-control-status"))
             .default_pos(egui::pos2(14.0, 60.0))
             .order(egui::Order::Foreground)
             .movable(true)

@@ -1,19 +1,17 @@
 //! Device-scoped clipboard RPC with a process-wide platform adapter.
 pub(crate) mod drag;
 mod formats;
-#[cfg(not(windows))]
+
 #[path = "fuse_linux.rs"]
 mod fuse;
-#[cfg(windows)]
-mod native;
-#[cfg(not(windows))]
+
 #[path = "native_linux.rs"]
 mod native;
 mod protocol;
-#[cfg(not(windows))]
+
 #[path = "x11_offer_linux.rs"]
 mod x11_offer;
-#[cfg(not(windows))]
+
 #[path = "x11_read_linux.rs"]
 mod x11_read;
 use anyhow::{Result, anyhow, bail, ensure};
@@ -560,7 +558,7 @@ impl Inner {
             Outbound::Packets(_, v) => v.iter().map(Message::encoded_len).sum(),
         };
         SEND_BYTES
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| {
                 n.checked_add(size)
                     .filter(|n| *n <= MAX_DATA + 4 * 1024 * 1024)
             })

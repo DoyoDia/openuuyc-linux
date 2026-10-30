@@ -1,4 +1,3 @@
-#![cfg_attr(windows, windows_subsystem = "windows")]
 #![allow(
     non_snake_case,
     reason = "The executable uses the OpenUUYC product name."
@@ -26,8 +25,6 @@ struct Cli {
     /// 系统按 `uuremote://` 协议注册拉起的协助链接
     #[arg(value_name = "URL", hide = true)]
     link: Option<String>,
-    #[arg(long, hide = true)]
-    bootstrap_version: bool,
     /// 日志过滤器，例如 info、debug、trace 或 openuuyc=trace
     #[arg(long, global = true)]
     log_level: Option<String>,
@@ -40,72 +37,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    #[cfg(windows)]
-    #[command(hide = true)]
-    WolConfigure {
-        #[arg(long)]
-        interface: String,
-        #[arg(long)]
-        mac: String,
-    },
-    /// 使用当前程序包更新已安装版本
-    #[cfg(windows)]
-    Update {
-        /// 不显示更新窗口；需要管理员权限时仍请求 Windows UAC
-        #[arg(long)]
-        silent: bool,
-        /// 禁止请求提权，权限不足时返回 740（用于无人值守脚本）
-        #[arg(long, requires = "silent")]
-        no_elevate: bool,
-    },
-    #[cfg(windows)]
-    #[command(hide = true)]
-    Notification { uri: String },
-    /// 打开卸载窗口，选择是否保留驱动和本机数据
-    #[cfg(windows)]
-    Uninstall {
-        #[arg(long, hide = true)]
-        parent: Option<u32>,
-    },
-    #[cfg(windows)]
-    #[command(hide = true)]
-    Service,
-    #[cfg(windows)]
-    #[command(hide = true)]
-    HostResident {
-        #[arg(long)]
-        parent: u32,
-    },
-    #[cfg(windows)]
-    #[command(hide = true)]
-    InputAgent {
-        #[arg(long)]
-        pipe: String,
-        #[arg(long)]
-        parent: u32,
-    },
-    #[cfg(windows)]
-    #[command(hide = true)]
-    CaptureAgent {
-        #[arg(long)]
-        pipe: String,
-        #[arg(long)]
-        parent: u32,
-    },
-    #[cfg(windows)]
-    #[command(hide = true)]
-    Component {
-        #[arg(value_enum)]
-        component: openuuyc::application::ComponentKind,
-        #[arg(value_enum)]
-        operation: openuuyc::application::ComponentOperation,
-        #[arg(long)]
-        allow_sas: bool,
-        #[arg(long)]
-        owner: Option<String>,
-        #[command(flatten)]
-        removal: openuuyc::application::RemovalOptions,
-    },
     #[command(hide = true)]
     DisplayRecovery { token: String },
     /// 列出或接上本机正在运行的被控终端会话
@@ -181,17 +112,7 @@ fn main() -> Result<()> {
     openuuyc::application::bootstrap::initialize()?;
     let parsed = parse_cli();
 
-    if !parsed
-        .as_ref()
-        .is_ok_and(|cli| cli.command.as_ref().is_some_and(internal_role))
-    {
-        attach_parent_console();
-    }
     let cli = parsed.unwrap_or_else(|error| error.exit());
-    if cli.bootstrap_version {
-        println!("1");
-        return Ok(());
-    }
     let link = cli.link.clone();
     let command = cli.command.unwrap_or(Commands::Gui {
         background: false,
@@ -201,14 +122,6 @@ fn main() -> Result<()> {
         transport: None,
     });
 
-    #[cfg(windows)]
-    if let Commands::Notification { uri } = &command {
-        return app::notification_activation(uri);
-    }
-    if matches!(command, Commands::Gui { .. }) && openuuyc::application::route_installed_gui()? {
-        openuuyc::application::bootstrap::handoff();
-        return Ok(());
-    }
     let _instance = if matches!(command, Commands::Gui { .. }) {
         let activation = match (link.as_deref(), &command) {
             // 链接是用户点出来的，哪怕这次是后台启动也得把窗口叫出来。
@@ -224,16 +137,13 @@ fn main() -> Result<()> {
         match app::instance::acquire(activation)? {
             Some(instance) => Some(instance),
             None => {
-                openuuyc::application::bootstrap::handoff();
                 return Ok(());
             }
         }
     } else {
         None
     };
-    #[cfg(windows)]
-    let uninstalling = matches!(command, Commands::Uninstall { .. });
-    #[cfg(not(windows))]
+
     let uninstalling = false;
     let _logging = if uninstalling {
         None
@@ -245,96 +155,12 @@ fn main() -> Result<()> {
     };
     tracing::info!(target: "openuuyc", version = env!("CARGO_PKG_VERSION"), "application started");
 
-    #[cfg(windows)]
-    if let Commands::Update { silent, no_elevate } = command {
-        if !silent {
-            return openuuyc::application::update_application(false, false).map(|_| ());
-        }
-        let result = openuuyc::application::update_application(silent, no_elevate);
-        let code = match result {
-            Ok(false) => {
-                println!("更新完成");
-                0
-            }
-            Ok(true) => {
-                println!("更新完成，需要重启 Windows；未自动重启");
-                3010
-            }
-            Err(error) => {
-                tracing::error!(error=%format!("{error:#}"), "application update failed");
-                eprintln!("更新失败：{error:#}");
-                openuuyc::application::update_error_code(&error)
-            }
-        };
-        drop(_logging);
-        std::process::exit(code);
-    }
-
-    #[cfg(windows)]
-    if let Commands::Component {
-        component,
-        operation,
-        allow_sas,
-        owner,
-        removal,
-    } = command
-    {
-        let result = openuuyc::application::component_operation(
-            component,
-            operation,
-            allow_sas,
-            owner.as_deref(),
-            removal,
-        );
-        let reboot = match result {
-            Ok(reboot) => reboot,
-            Err(error) => {
-                drop(_logging);
-                if let Some(code) = openuuyc::application::component_error_code(&error) {
-                    std::process::exit(code);
-                }
-                return Err(error);
-            }
-        };
-        drop(_logging);
-        if removal.remove_data && !reboot {
-            openuuyc::application::purge_machine_data()?;
-        }
-        if reboot {
-            std::process::exit(3010);
-        }
-        return Ok(());
-    }
     let result = match command {
-        #[cfg(windows)]
-        Commands::WolConfigure { interface, mac } => {
-            openuuyc::application::configure_wol(interface, mac)
-        }
-        #[cfg(windows)]
-        Commands::Update { .. } => unreachable!(),
-        #[cfg(windows)]
-        Commands::Uninstall { parent } => openuuyc::application::uninstall_application(parent),
-        #[cfg(windows)]
-        Commands::Component { .. } => unreachable!(),
-        #[cfg(windows)]
-        Commands::Service => openuuyc::application::host_service(),
-        #[cfg(windows)]
-        Commands::HostResident { parent } => openuuyc::application::host_resident(parent),
-        #[cfg(windows)]
-        Commands::InputAgent { pipe, parent } => openuuyc::application::input_agent(&pipe, parent),
-        #[cfg(windows)]
-        Commands::CaptureAgent { pipe, parent } => {
-            openuuyc::application::capture_agent(&pipe, parent)
-        }
         Commands::DisplayRecovery { token } => openuuyc::application::display_recovery(&token),
         Commands::Terminal { session, list, new } => {
             openuuyc::application::terminal_attach(session.as_deref(), list, new)
         }
         Commands::PluginVideoHost => openuuyc::plugins::video::host(),
-        #[cfg(windows)]
-        Commands::Notification { .. } => {
-            unreachable!("notification activation is handled before application startup")
-        }
 
         Commands::PluginHost { manifest } => openuuyc::plugins::host(&manifest),
         Commands::Gui {
@@ -415,29 +241,8 @@ fn main() -> Result<()> {
         tracing::error!(target: "openuuyc", error = %format_args!("{error:#}"), "application stopped with an error");
     }
     drop(_instance);
-    #[cfg(windows)]
-    if result.is_ok() && openuuyc::application::take_installed_handoff() {
-        openuuyc::application::launch_installed(std::env::args_os().skip(1))?;
-    }
-    result
-}
 
-/// Roles the executable starts itself in, which report to their parent
-/// rather than to a console of their own.
-fn internal_role(command: &Commands) -> bool {
-    match command {
-        Commands::PluginHost { .. }
-        | Commands::PluginVideoHost
-        | Commands::DisplayRecovery { .. } => true,
-        #[cfg(windows)]
-        Commands::Notification { .. }
-        | Commands::Component { .. }
-        | Commands::Service
-        | Commands::HostResident { .. }
-        | Commands::InputAgent { .. }
-        | Commands::CaptureAgent { .. } => true,
-        _ => false,
-    }
+    result
 }
 
 /// 协议注册把链接当作第一个参数交给程序，所以根上有一个位置参数。子命令名
@@ -469,18 +274,6 @@ fn parse_cli() -> std::result::Result<Cli, clap::Error> {
             }
         })?;
     Cli::from_arg_matches(&matches)
-}
-
-fn attach_parent_console() {
-    // Attach before printing clap output. Explorer has no parent console;
-    // inherited STARTF_USESTDHANDLES pipes/files remain redirected on attach.
-    // Never allocate a console just for launching the device center or viewer.
-    #[cfg(windows)]
-    {
-        use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
-        let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
-    }
-    // A Linux process is started from its terminal and keeps those streams.
 }
 
 async fn connect_device(

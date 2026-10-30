@@ -235,7 +235,7 @@ pub(super) fn show(
     }
     let enabled = mutation_enabled && !list.busy && list.error.is_none();
     let nav_enabled = (!remote || connected) && !list.busy;
-    let id = ui.id().with(remote);
+    let id = ui.scope_id().with(remote);
     let mut pane = ui.new_child(UiBuilder::new().id_salt(remote).max_rect(rect.shrink(1.)));
     pane.set_clip_rect(rect.intersect(ui.clip_rect()));
     let ui = &mut pane;

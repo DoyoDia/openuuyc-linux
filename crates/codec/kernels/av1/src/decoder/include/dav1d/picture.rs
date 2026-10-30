@@ -8,7 +8,7 @@ use std::{array, mem};
 
 use libc::{ptrdiff_t, uintptr_t};
 use to_method::To as _;
-use zerocopy::{AsBytes, FromBytes, FromZeroes};
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::decoder::c_arc::RawArc;
 use crate::decoder::disjoint_mut::{
@@ -102,7 +102,7 @@ pub struct Dav1dPicture {
     pub allocator_data: Option<SendSyncNonNull<c_void>>,
 }
 
-#[derive(Clone, FromZeroes, FromBytes, AsBytes)]
+#[derive(Clone, FromBytes, IntoBytes, KnownLayout, Immutable)]
 #[repr(C, align(64))]
 pub struct AlignedPixelChunk([u8; RAV1D_PICTURE_ALIGNMENT]);
 
@@ -177,7 +177,7 @@ impl Rav1dPictureDataComponentInner {
     /// As opposed to [`Self::new`], this is safe because `buf` is a `&mut` and thus unique,
     /// so it is sound to further subdivide it into disjoint `&mut`s.
     pub fn wrap_buf<BD: BitDepth>(buf: &mut [BD::Pixel], stride: usize) -> Self {
-        let buf = AsBytes::as_bytes_mut(buf);
+        let buf = IntoBytes::as_mut_bytes(buf);
         let ptr = NonNull::new(buf.as_mut_ptr()).unwrap();
         assert!(ptr.cast::<AlignedPixelChunk>().is_aligned());
         let len = buf.len();

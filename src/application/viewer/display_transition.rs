@@ -14,7 +14,7 @@ pub(super) fn show(
     if !topology_visible && mode.is_none() {
         return false;
     }
-    egui::Area::new(egui::Id::new(("display-transition", screen_id)))
+    egui::Area::new(egui::Id::unique(("display-transition", screen_id)))
         .order(egui::Order::Background)
         .fixed_pos(viewport.min)
         .movable(false)

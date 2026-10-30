@@ -5,13 +5,9 @@ use super::{
 use anyhow::{Context, Result, ensure};
 use prost::Message;
 use sha2::{Digest, Sha256};
-#[cfg(unix)]
+
 use std::os::unix::{fs::OpenOptionsExt, io::AsRawFd};
-#[cfg(windows)]
-use std::os::windows::{
-    fs::{MetadataExt, OpenOptionsExt},
-    io::AsRawHandle,
-};
+
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Write},
@@ -29,28 +25,6 @@ pub(crate) enum KnownFolder {
     Documents,
 }
 
-#[cfg(windows)]
-pub(crate) fn known_folder(folder: KnownFolder) -> Option<PathBuf> {
-    use windows::Win32::UI::Shell::{FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads};
-    let id = match folder {
-        KnownFolder::Desktop => FOLDERID_Desktop,
-        KnownFolder::Downloads => FOLDERID_Downloads,
-        KnownFolder::Documents => FOLDERID_Documents,
-    };
-    let value = unsafe {
-        windows::Win32::UI::Shell::SHGetKnownFolderPath(
-            &id,
-            windows::Win32::UI::Shell::KF_FLAG_DEFAULT,
-            None,
-        )
-    }
-    .ok()?;
-    let path = unsafe { value.to_string() }.ok().map(PathBuf::from);
-    unsafe { windows::Win32::System::Com::CoTaskMemFree(Some(value.0.cast())) };
-    path.filter(|p| p.is_dir())
-}
-
-#[cfg(not(windows))]
 pub(crate) fn known_folder(folder: KnownFolder) -> Option<PathBuf> {
     let (key, default) = match folder {
         KnownFolder::Desktop => ("XDG_DESKTOP_DIR", "Desktop"),
@@ -62,40 +36,17 @@ pub(crate) fn known_folder(folder: KnownFolder) -> Option<PathBuf> {
 
 /// Windows reparse points and Unix symlinks both break out of a chosen root.
 pub(super) fn is_link(metadata: &std::fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        metadata.file_attributes() & 0x400 != 0
-    }
-    #[cfg(not(windows))]
-    {
-        metadata.is_symlink()
-    }
+    { metadata.is_symlink() }
 }
 
 /// Open flags that refuse to traverse a link at the final component.
 fn no_follow(options: &mut OpenOptions) -> &mut OpenOptions {
-    #[cfg(windows)]
-    {
-        // FILE_SHARE_READ + FILE_FLAG_OPEN_REPARSE_POINT
-        options.share_mode(1).custom_flags(0x00200000)
-    }
-    #[cfg(not(windows))]
-    {
-        options.custom_flags(libc::O_NOFOLLOW)
-    }
+    { options.custom_flags(libc::O_NOFOLLOW) }
 }
 
 /// Directory handle kept open so the path cannot be swapped mid-transfer.
 fn no_follow_dir(options: &mut OpenOptions) -> &mut OpenOptions {
-    #[cfg(windows)]
-    {
-        // FILE_SHARE_READ|WRITE + FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT
-        options.share_mode(3).custom_flags(0x02200000)
-    }
-    #[cfg(not(windows))]
-    {
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY)
-    }
+    { options.custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY) }
 }
 pub(super) fn safe_relative(name: &str) -> Result<PathBuf> {
     ensure!(
@@ -172,54 +123,7 @@ fn not_link(p: &Path) -> Result<std::fs::Metadata> {
     );
     Ok(m)
 }
-/// A protocol path from the remote peer as a local absolute path: a drive
-/// path on Windows, a `/` path on Unix (the form macOS hosts use). Every
-/// existing ancestor must be a plain directory, never a link.
-#[cfg(windows)]
-pub(super) fn local_path(value: &str) -> Result<PathBuf> {
-    let path = if value == ":/Default" {
-        known_folder(KnownFolder::Downloads).context("用户下载目录不可用")?
-    } else if value.len() == 2
-        && value.as_bytes()[0].is_ascii_alphabetic()
-        && value.as_bytes()[1] == b':'
-    {
-        // A drive item is a volume root in this protocol, never a process-relative drive cwd.
-        PathBuf::from(format!("{value}\\"))
-    } else {
-        PathBuf::from(value)
-    };
-    let text = path.to_str().context("文件路径无效")?;
-    let bytes = text.as_bytes();
-    ensure!(
-        bytes.len() >= 3
-            && bytes[0].is_ascii_alphabetic()
-            && bytes[1] == b':'
-            && matches!(bytes[2], b'/' | b'\\'),
-        "仅支持本地磁盘的绝对路径：{text}"
-    );
-    let mut result = PathBuf::from(format!("{}:\\", bytes[0] as char));
-    let tail = text[3..].trim_end_matches(['\\', '/']);
-    if !tail.is_empty() {
-        result.push(safe_relative(tail)?);
-    }
-    // Every existing ancestor must stay a normal directory, not a junction or device path.
-    let mut current = PathBuf::new();
-    for part in result.components() {
-        current.push(part);
-        if !current.is_absolute() {
-            continue;
-        }
-        match std::fs::symlink_metadata(&current) {
-            Ok(m) => ensure!(
-                m.file_attributes() & 0x400 == 0,
-                "不允许通过重解析点访问文件"
-            ),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Ok(result)
-}
+
 /// 回给对端的路径形状：分隔符一律用反斜杠。
 ///
 /// 官方主控把它手里的路径原样回给我们（实测：它把我们给的 `full_path` 一字不差地放进
@@ -231,7 +135,6 @@ pub(super) fn wire_path(value: &str) -> String {
     value.replace('/', "\\")
 }
 
-#[cfg(not(windows))]
 pub(super) fn local_path(value: &str) -> Result<PathBuf> {
     let text = if value == ":/Default" {
         // A download folder whose name is not UTF-8 cannot be spoken on the wire;
@@ -283,21 +186,9 @@ fn underneath(path: &Path, root: &Path) -> bool {
 }
 fn check_handle(f: &File, root: &Path) -> Result<()> {
     ensure!(!is_link(&f.metadata()?), "打开的文件已变为链接");
-    #[cfg(windows)]
-    let actual = {
-        let mut path = vec![0u16; 32768];
-        let n = unsafe {
-            windows::Win32::Storage::FileSystem::GetFinalPathNameByHandleW(
-                windows::Win32::Foundation::HANDLE(f.as_raw_handle()),
-                &mut path,
-                windows::Win32::Storage::FileSystem::FILE_NAME_NORMALIZED,
-            )
-        } as usize;
-        ensure!(n > 0 && n < path.len(), "无法核对文件实际位置");
-        PathBuf::from(String::from_utf16(&path[..n])?)
-    };
+
     // /proc/self/fd resolves the handle the same way, after every rename.
-    #[cfg(not(windows))]
+
     let actual = std::fs::read_link(format!("/proc/self/fd/{}", f.as_raw_fd()))
         .context("无法核对文件实际位置")?;
     ensure!(
@@ -503,33 +394,7 @@ pub(super) async fn finish(
     if target.exists() {
         ensure!(not_link(&target)?.is_file(), "目标已经变成目录或链接");
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        let from = source
-            .as_os_str()
-            .encode_wide()
-            .chain(Some(0))
-            .collect::<Vec<_>>();
-        let to = target
-            .as_os_str()
-            .encode_wide()
-            .chain(Some(0))
-            .collect::<Vec<_>>();
-        unsafe {
-            windows::Win32::Storage::FileSystem::MoveFileExW(
-                windows::core::PCWSTR(from.as_ptr()),
-                windows::core::PCWSTR(to.as_ptr()),
-                windows::Win32::Storage::FileSystem::MOVE_FILE_FLAGS(if policy == 1 {
-                    1 | 8
-                } else {
-                    8
-                }),
-            )
-        }
-        .context("无法完成目标文件保存")?;
-    }
-    #[cfg(not(windows))]
+
     {
         // policy 1 replaces an existing target; otherwise the name must be free.
         if policy != 1 {
@@ -570,7 +435,7 @@ impl Store {
             crate::platform::paths::local_app_data()
                 .context("本地配置目录不可用")?
                 .join("OpenUUYC/file-transfer")
-                .join(format!("{:x}", Sha256::digest(account)))
+                .join(hex::encode(Sha256::digest(account)))
                 .join(format!("{device}.json")),
         ))
     }
@@ -620,7 +485,7 @@ impl Store {
     }
 }
 
-#[cfg(all(test, not(windows)))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

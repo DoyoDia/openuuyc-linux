@@ -30,59 +30,28 @@ mod fullscreen_chrome;
 mod input_gate;
 mod polling_warning;
 
-#[cfg(windows)]
-mod windows_cursor;
-
-#[cfg(not(windows))]
 mod linux_drag;
-#[cfg(target_os = "linux")]
+
 mod linux_gamepad;
-#[cfg(not(windows))]
+
 pub(crate) mod linux_keyboard;
-#[cfg(not(windows))]
+
 mod linux_keyboard_grab;
-#[cfg(not(windows))]
+
 mod linux_shortcuts;
-#[cfg(windows)]
-mod windows_keyboard;
 
-#[cfg(windows)]
-mod windows_drag;
-#[cfg(windows)]
-mod windows_mouse;
-
-#[cfg(windows)]
-pub(crate) mod windows_presenter;
-#[cfg(windows)]
-pub(crate) use windows_presenter as presenter;
-#[cfg(not(windows))]
 pub(crate) mod linux_presenter;
-#[cfg(not(windows))]
+
 pub(crate) use linux_presenter as presenter;
 
 /// Windows installs a low-level keyboard hook so system keys reach the remote
 /// desktop. On Linux each player window holds the desktop's shortcuts back
 /// itself (`linux_shortcuts`), so there is nothing process-wide to install.
-pub(crate) struct DesktopInputHook {
-    #[cfg(windows)]
-    _hook: windows_keyboard::KeyboardHook,
-}
-#[cfg(windows)]
-pub(crate) fn desktop_input_message(message: *const std::ffi::c_void) -> bool {
-    windows_keyboard::message(message) || windows_mouse::router().message(message)
-}
+pub(crate) struct DesktopInputHook {}
+
 pub(crate) fn desktop_input_hook() -> Result<DesktopInputHook> {
-    #[cfg(windows)]
-    {
-        windows_keyboard::remove_unused_raw_keyboard()?;
-        windows_keyboard::KeyboardHook::install().map(|hook| DesktopInputHook { _hook: hook })
-    }
-    #[cfg(not(windows))]
     Ok(DesktopInputHook {})
 }
-
-#[cfg(windows)]
-mod windows_ui;
 
 const CONNECTION_PROGRESS_STEPS: u8 = 13;
 
@@ -104,9 +73,7 @@ pub struct ConnectionProgress {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct ViewerDisplayHandle {
-    pub surface_writer: Option<crate::platform::surface::D3D11SurfaceWriter>,
-}
+pub(crate) struct ViewerDisplayHandle {}
 
 impl ConnectionProgress {
     pub(crate) fn updating(started: Instant) -> Self {
@@ -378,7 +345,7 @@ impl NativeViewerSession {
             receiver_feedback,
             performance,
             stream_control,
-            display,
+            display: _,
         } = config;
         let (video_sink, video_source) = mpsc::unbounded_channel();
         let frame_queue = Arc::new(Mutex::new(None));
@@ -410,8 +377,6 @@ impl NativeViewerSession {
                     decode_enabled: manager_enabled,
                     decode_idle: decode_idle_sender,
                     pause_epoch: manager_pause_epoch,
-
-                    surface_writer: display.surface_writer,
                 },
                 video_source,
                 manager_frame_queue,

@@ -147,7 +147,7 @@ pub(crate) fn annotation_header(
 
 pub(crate) fn annotation_clear_dialog(ctx: &egui::Context, uncertain: bool) -> Option<bool> {
     let mut action = None;
-    let modal = egui::Modal::new(egui::Id::new("annotation-clear-confirm"))
+    let modal = egui::Modal::new(egui::Id::unique("annotation-clear-confirm"))
         .frame(dialog_frame())
         .show(ctx, |ui| {
             ui.set_width(

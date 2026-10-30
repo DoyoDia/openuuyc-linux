@@ -46,27 +46,7 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use webrtc::data_channel::RTCDataChannel;
 
-#[cfg(target_os = "linux")]
 pub(crate) mod local;
-/// 本机 attach 目前只有 Unix socket 一套实现；Windows 用命名管道还没做，
-/// 侧边栏与子命令先明确说不支持。
-#[cfg(not(target_os = "linux"))]
-pub(crate) mod local {
-    /// 这个平台能不能把会话接到本机终端里。
-    pub(crate) const SUPPORTED: bool = false;
-    pub(crate) const UNSUPPORTED: &str = "本机终端接入暂只支持 Linux";
-    pub(crate) fn serve(_table: std::sync::Arc<std::sync::Mutex<super::Sessions>>) {}
-    pub(crate) fn run_client(
-        _session: Option<&str>,
-        _list: bool,
-        _new: bool,
-    ) -> anyhow::Result<()> {
-        anyhow::bail!(UNSUPPORTED)
-    }
-    pub(crate) fn open_in_terminal(_session: u32) -> anyhow::Result<()> {
-        anyhow::bail!(UNSUPPORTED)
-    }
-}
 
 /// The four bytes every terminal frame starts with.
 const MAGIC: &[u8; 4] = b"TERM";
@@ -233,7 +213,6 @@ pub(crate) enum Consumer {
     Remote(u64),
     // Only the Linux socket service (`local.rs`) attaches a local terminal;
     // elsewhere the page lists and ends sessions but cannot open them here.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Local(u64),
 }
 
@@ -328,7 +307,10 @@ impl Session {
         }
         // The model has to follow the pty, or the replay would describe a
         // screen of the old size.
-        self.screen.screen_mut().set_size(rows, cols);
+        self.screen.screen_mut().set_size(
+            rows.max(1).try_into().unwrap(),
+            cols.max(1).try_into().unwrap(),
+        );
     }
 }
 
@@ -416,7 +398,6 @@ pub(crate) struct LocalSession {
     pub state: &'static str,
     pub created_ms: i64,
     /// Shown by `OpenUUYC terminal --list` (Linux only).
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub last_active_ms: i64,
     /// 远程主控是否附着。
     pub remote: bool,
@@ -434,7 +415,7 @@ pub(crate) struct LocalSession {
 /// The local-terminal items marked `allow(dead_code)` off Linux are driven
 /// only by the Linux socket service in `local.rs`; the other platforms list
 /// and end sessions but have no local attach yet.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+
 pub(crate) struct LocalOutput {
     pub data: Vec<u8>,
     /// shell 已经退出；这个消费者已被摘掉，客户端应当收尾。
@@ -559,7 +540,7 @@ impl Sessions {
             return Ok((
                 handle,
                 existing.name.clone(),
-                existing.screen.screen().state_formatted(),
+                existing.screen.screen().state_formatted().into_bytes(),
             ));
         }
         let owner = owner.account;
@@ -585,7 +566,11 @@ impl Sessions {
                 state: SessionState::Running,
                 created_ms: stamp,
                 last_active_ms: stamp,
-                screen: vt100::Parser::new(rows, cols, 0),
+                screen: vt100::Parser::new(
+                    rows.max(1).try_into().unwrap(),
+                    cols.max(1).try_into().unwrap(),
+                    0,
+                ),
                 pending: Vec::new(),
                 output: BTreeMap::from([(Consumer::Remote(connection), Vec::new())]),
                 remote_size: Some((cols, rows)),
@@ -632,7 +617,11 @@ impl Sessions {
                 state: SessionState::Detached,
                 created_ms: stamp,
                 last_active_ms: stamp,
-                screen: vt100::Parser::new(24, 80, 0),
+                screen: vt100::Parser::new(
+                    std::num::NonZeroU16::new(24).unwrap(),
+                    std::num::NonZeroU16::new(80).unwrap(),
+                    0,
+                ),
                 pending: Vec::new(),
                 output: BTreeMap::new(),
                 remote_size: None,
@@ -856,7 +845,7 @@ impl Sessions {
     ///
     /// 本机不按登录账号过滤：进程就是同一个用户，侧边栏列出的是这台
     /// 机器上正在跑的 shell。消费者用一个独立编号，与远程连接互不影响。
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+
     pub(crate) fn attach_local(
         &mut self,
         handle: u32,
@@ -877,12 +866,12 @@ impl Sessions {
         session.last_active_ms = now_ms();
         Ok((
             session.name.clone(),
-            session.screen.screen().state_formatted(),
+            session.screen.screen().state_formatted().into_bytes(),
         ))
     }
 
     /// 本机终端自己离开了；shell 留下来等下一次 attach。
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+
     pub(crate) fn detach_local(&mut self, consumer: u64) {
         for session in self.sessions.values_mut() {
             session.detach(Consumer::Local(consumer));
@@ -890,7 +879,7 @@ impl Sessions {
     }
 
     /// 本机终端输入的字节写回 pty。
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+
     pub(crate) fn write_local(&mut self, handle: u32, data: &[u8]) -> Result<(), SessionError> {
         let key = self.local_key(handle).ok_or(SessionError::Gone)?;
         let session = self.sessions.get_mut(&key).ok_or(SessionError::Gone)?;
@@ -898,7 +887,7 @@ impl Sessions {
     }
 
     /// 本机终端改了大小。
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+
     pub(crate) fn resize_local(
         &mut self,
         handle: u32,
@@ -1087,7 +1076,7 @@ impl Sessions {
     }
 
     /// 取走本机 attach 的待发输出；`None` 表示这个消费者已经不在表里。
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+
     pub(crate) fn pump_local(&mut self, consumer: u64, budget: usize) -> Option<LocalOutput> {
         self.drain(budget);
         self.sessions.values_mut().find_map(|session| {
@@ -1280,26 +1269,12 @@ pub(crate) fn end_all() {
     }
 }
 
-/// Why this host cannot serve a terminal; `None` when it can.
-///
-/// The platform answers for this process (root on POSIX, LocalSystem on
-/// Windows). In unattended mode the shell would come from the SYSTEM service
-/// rather than from this process, so the settings page, which runs as the
-/// user, is told the same thing the service would answer and does not offer
-/// a switch every connection would refuse.
+/// Why the current Linux user cannot serve a terminal.
 pub(crate) fn unavailable() -> Option<&'static str> {
-    crate::platform::terminal::unavailable().or_else(|| {
-        crate::platform::host_service::resident::managed()
-            .then_some("无人值守模式以 SYSTEM 身份运行，不提供终端")
-    })
+    crate::platform::terminal::unavailable()
 }
 
-/// Why the local user cannot open a shell from this machine's sessions page
-/// or command line; `None` when they can.
-///
-/// The same refusals as the controller's terminal apply (root on POSIX,
-/// SYSTEM on Windows), plus platforms without a local attach yet, so the page
-/// never offers a button that is bound to fail.
+/// Why the local user cannot open or attach a terminal session.
 pub(crate) fn local_unavailable() -> Option<&'static str> {
     if !local::SUPPORTED {
         return Some(local::UNSUPPORTED);
@@ -1364,7 +1339,7 @@ pub(crate) fn open_local_terminal(handle: u32) -> anyhow::Result<()> {
 }
 
 /// 本机 attach 的消费者编号，与远程连接分开计。
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+
 pub(crate) fn next_local_consumer() -> u64 {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -1905,27 +1880,17 @@ mod tests {
         assert!(Frame::parse(&encoded).is_none());
     }
 
-    /// The shell the pty tests drive. `cmd.exe` is present on every Windows
-    /// install; `/bin/sh` is on every POSIX one.
+    /// The shell used by the Linux PTY tests.
     fn shell() -> &'static str {
-        if cfg!(windows) { "cmd.exe" } else { "/bin/sh" }
+        "/bin/sh"
     }
 
-    /// One command line for that shell. `cmd.exe` reads a bare `\n` as part of
-    /// the command in some cases, so Windows gets the CRLF it expects.
     fn line(command: &str) -> Vec<u8> {
-        if cfg!(windows) {
-            format!("{command}\r\n").into_bytes()
-        } else {
-            format!("{command}\n").into_bytes()
-        }
+        format!("{command}\n").into_bytes()
     }
 
     #[test]
-    #[cfg_attr(
-        not(any(target_os = "linux", target_os = "macos", windows)),
-        ignore = "no terminal backend on this platform"
-    )]
+
     fn sessions_are_keyed_by_the_controller_handle() {
         let mut sessions = Sessions::default();
         sessions
@@ -1940,10 +1905,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(
-        not(any(target_os = "linux", target_os = "macos", windows)),
-        ignore = "no terminal backend on this platform"
-    )]
+
     fn a_duplicate_name_is_refused() {
         let mut sessions = Sessions::default();
         sessions
@@ -1981,10 +1943,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(
-        not(any(target_os = "linux", target_os = "macos", windows)),
-        ignore = "no terminal backend on this platform"
-    )]
+
     fn write_and_resize_reach_the_shell() {
         let mut sessions = Sessions::default();
         sessions
@@ -2011,10 +1970,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(
-        not(any(target_os = "linux", target_os = "macos", windows)),
-        ignore = "no terminal backend on this platform"
-    )]
+
     fn a_reattach_replays_the_screen() {
         let mut sessions = Sessions::default();
         let (handle, _, replay) = sessions
@@ -2048,10 +2004,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(
-        not(any(target_os = "linux", target_os = "macos", windows)),
-        ignore = "no terminal backend on this platform"
-    )]
+
     fn an_exited_shell_reports_once() {
         let mut sessions = Sessions::default();
         sessions
@@ -2075,10 +2028,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(
-        not(any(target_os = "linux", target_os = "macos", windows)),
-        ignore = "no terminal backend on this platform"
-    )]
+
     fn killing_removes_a_session_and_a_second_kill_is_gone() {
         let mut sessions = Sessions::default();
         sessions
@@ -2090,10 +2040,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(
-        not(any(target_os = "linux", target_os = "macos", windows)),
-        ignore = "no terminal backend on this platform"
-    )]
+
     fn every_requested_shell_kind_resolves_to_a_real_program() {
         // The Android client always asks for `powershell`. On Windows that is
         // the program itself; elsewhere it falls back to the login shell.
@@ -2123,7 +2070,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_os = "linux"), ignore = "needs a pty, which only Linux has")]
+
     fn output_goes_only_to_the_attached_connection() {
         let mut sessions = Sessions::default();
         sessions
@@ -2154,7 +2101,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_os = "linux"), ignore = "needs a pty, which only Linux has")]
+
     fn a_released_shell_waits_for_the_reattach() {
         let mut sessions = Sessions::default();
         sessions
@@ -2176,7 +2123,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_os = "linux"), ignore = "needs a pty, which only Linux has")]
+
     fn a_reopen_takes_the_shell_over_from_a_stalled_connection() {
         let mut sessions = Sessions::default();
         sessions
@@ -2210,7 +2157,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_os = "linux"), ignore = "local attach is Linux-only")]
+
     fn the_exit_follows_the_last_output_to_every_end() {
         let mut sessions = Sessions::default();
         sessions
@@ -2256,7 +2203,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_os = "linux"), ignore = "needs a pty, which only Linux has")]
+
     fn limits_and_names_are_per_login() {
         let mut sessions = Sessions::default();
         for handle in 1..=MAX_SESSIONS as u32 {
@@ -2279,7 +2226,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_os = "linux"), ignore = "needs a pty, which only Linux has")]
+
     fn input_that_does_not_fit_is_refused_whole() {
         let mut sessions = Sessions::default();
         sessions
@@ -2318,7 +2265,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_os = "linux"), ignore = "needs a pty, which only Linux has")]
+
     fn the_sweep_takes_exited_and_abandoned_shells() {
         let mut sessions = Sessions::default();
         sessions
@@ -2342,7 +2289,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_os = "linux"), ignore = "needs a pty, which only Linux has")]
+
     fn ending_a_login_ends_only_its_shells() {
         let table = shared();
         lock_table(&table)
@@ -2360,7 +2307,7 @@ mod tests {
     #[test]
     // The bulk producer below is a POSIX shell loop. The model itself is
     // platform-independent, so Linux coverage of this property is enough.
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+
     fn a_reattach_replays_the_screen_not_the_output_log() {
         let mut sessions = Sessions::default();
         let (handle, _, _) = sessions
@@ -2434,7 +2381,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_os = "linux"), ignore = "local attach is Linux-only")]
+
     fn a_local_terminal_attaches_and_leaves_without_ending_the_shell() {
         let mut sessions = Sessions::default();
         sessions
@@ -2470,7 +2417,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_os = "linux"), ignore = "local attach is Linux-only")]
+
     fn both_ends_see_the_same_shell() {
         let mut sessions = Sessions::default();
         sessions
@@ -2489,7 +2436,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_os = "linux"), ignore = "local attach is Linux-only")]
+
     fn the_smallest_attached_size_wins() {
         let mut sessions = Sessions::default();
         sessions
@@ -2508,7 +2455,7 @@ mod tests {
 
     #[test]
     // A POSIX `printf`; the model is platform-independent.
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+
     fn a_resize_reaches_the_replayed_screen() {
         let mut sessions = Sessions::default();
         let (handle, _, _) = sessions
@@ -2552,7 +2499,11 @@ mod tests {
             .expect("reattach");
         // Draw the replay the way the controller would, at its width; the line
         // wraps onto a second row there, and none of it may be missing.
-        let mut client = vt100::Parser::new(24, 40, 0);
+        let mut client = vt100::Parser::new(
+            std::num::NonZeroU16::new(24).unwrap(),
+            std::num::NonZeroU16::new(40).unwrap(),
+            0,
+        );
         client.process(&replay);
         let drawn: String = client
             .screen()
@@ -2564,10 +2515,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(
-        not(any(target_os = "linux", target_os = "macos", windows)),
-        ignore = "no terminal backend on this platform"
-    )]
+
     fn an_oversized_terminal_is_clamped() {
         let mut sessions = Sessions::default();
         // Unclamped, this model alone would ask for 128 GiB.
@@ -2575,10 +2523,11 @@ mod tests {
             .open("acct", 0, 1, shell(), None, u16::MAX, u16::MAX)
             .expect("open");
         let size = |sessions: &Sessions| {
-            sessions.sessions[&key("acct", handle)]
+            let (rows, cols) = sessions.sessions[&key("acct", handle)]
                 .screen
                 .screen()
-                .size()
+                .size();
+            (rows.get(), cols.get())
         };
         assert_eq!(size(&sessions), (MAX_ROWS, MAX_COLS));
         sessions.resize("acct", handle, 100, 40).expect("resize");
@@ -2594,7 +2543,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_os = "linux"), ignore = "local attach is Linux-only")]
+
     fn a_local_session_is_created_listed_and_kept() {
         let mut sessions = Sessions::default();
         let handle = sessions.create_local(Some("mine".into())).expect("create");
@@ -2653,10 +2602,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(
-        not(any(target_os = "linux", target_os = "macos", windows)),
-        ignore = "no terminal backend on this platform"
-    )]
+
     fn the_controller_can_take_over_a_local_session() {
         let mut sessions = Sessions::default();
         let handle = sessions
@@ -2689,10 +2635,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(
-        not(any(target_os = "linux", target_os = "macos", windows)),
-        ignore = "no terminal backend on this platform"
-    )]
+
     fn local_sessions_do_not_exist_for_a_controller_not_allowed_in() {
         let mut sessions = Sessions::default();
         let handle = sessions
@@ -2730,10 +2673,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(
-        not(any(target_os = "linux", target_os = "macos", windows)),
-        ignore = "no terminal backend on this platform"
-    )]
+
     fn revoking_local_access_lets_go_of_the_local_shell_only() {
         let mut sessions = Sessions::default();
         let local = sessions
@@ -2779,7 +2719,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_os = "linux"), ignore = "local attach is Linux-only")]
+
     fn the_listing_moves_only_with_what_the_controller_sees() {
         let mut sessions = Sessions::default();
         let empty = sessions.listing("acct");

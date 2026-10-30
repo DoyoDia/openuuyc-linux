@@ -58,7 +58,7 @@ impl std::error::Error for Required {}
 
 pub(crate) fn confirmation(ctx: &egui::Context, device: &DeviceInfo) -> Option<bool> {
     let mut choice = None;
-    let response = egui::Modal::new(egui::Id::new(("takeover-device", &device.device_id)))
+    let response = egui::Modal::new(egui::Id::unique(("takeover-device", &device.device_id)))
         .frame(crate::ui::controls::dialog_frame())
         .show(ctx, |ui| {
             ui.set_width(crate::ui::theme::TAKEOVER_DIALOG_WIDTH);

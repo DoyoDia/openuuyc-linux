@@ -11,7 +11,7 @@ use std::{
 
 use crate::account::nrd_http::RetryPolicy;
 use anyhow::{Context, Result, bail};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use reqwest::{
     Method as HttpMethod,
     header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
@@ -1204,7 +1204,7 @@ fn make_signature(
         .collect::<Vec<_>>()
         .join("&");
 
-    let mut mac = <HmacSha256 as Mac>::new_from_slice(SIGNING_KEY)
+    let mut mac = <HmacSha256 as KeyInit>::new_from_slice(SIGNING_KEY)
         .context("failed to initialize request signer")?;
     mac.update(method.to_ascii_uppercase().as_bytes());
     mac.update(path.as_bytes());
@@ -1221,4 +1221,33 @@ fn hex_lower(bytes: &[u8]) -> String {
         output.push(HEX[(byte & 0x0f) as usize] as char);
     }
     output
+}
+
+#[cfg(test)]
+mod signing_tests {
+    use super::*;
+
+    #[test]
+    fn request_signature_preserves_the_canonical_hmac_sha256() {
+        let headers = [
+            ("X-Param-Z".into(), "last".into()),
+            ("X-Param-Sign".into(), "ignored".into()),
+            ("Content-Type".into(), "application/json".into()),
+            ("x-param-a".into(), "first".into()),
+        ];
+        assert_eq!(
+            make_signature("post", "/example", &headers, br#"{"ok":true}"#).unwrap(),
+            "277bdcac7ffc19e6fc9e8ecb6c6014dd9ee9f0f275d46a619bb3debbcc26d893"
+        );
+    }
+
+    #[test]
+    fn sha256_hex_preserves_leading_zeroes_and_lowercase() {
+        use sha2::Digest;
+        assert_eq!(
+            hex::encode(Sha256::digest(b"abc")),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(hex::encode([0, 1, 10, 15, 255]), "00010a0fff");
+    }
 }

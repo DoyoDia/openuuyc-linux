@@ -1,5 +1,5 @@
 use super::theme;
-use egui::{Align, FontId, Response, Ui, Vec2, vec2};
+use egui::{FontId, Response, Ui, Vec2, vec2};
 
 fn margin(height: f32) -> egui::Margin {
     if height >= theme::CONTROL_HEIGHT {
@@ -28,7 +28,7 @@ pub(crate) fn singleline(value: &mut String, height: f32) -> egui::TextEdit<'_> 
             )),
             ..Default::default()
         })
-        .vertical_align(Align::Center)
+        .align(egui::Align2::LEFT_CENTER)
         .margin(margin)
 }
 

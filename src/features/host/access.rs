@@ -6,13 +6,12 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
 
 #[derive(serde::Serialize, serde::Deserialize)]
-#[cfg(target_os = "linux")]
+
 struct StartupMediaCheck {
     signature: String,
     succeeded: bool,
 }
 
-#[cfg(target_os = "linux")]
 fn startup_media_signature(screens: &Result<Vec<capture::Screen>, String>) -> String {
     let screens = screens.as_ref();
     let environment = [
@@ -27,7 +26,12 @@ fn startup_media_signature(screens: &Result<Vec<capture::Screen>, String>) -> St
         "MESA_LOADER_DRIVER_OVERRIDE",
         "LD_LIBRARY_PATH",
     ]
-    .map(|name| (name, std::env::var_os(name).map(|value| value.to_string_lossy().into_owned())));
+    .map(|name| {
+        (
+            name,
+            std::env::var_os(name).map(|value| value.to_string_lossy().into_owned()),
+        )
+    });
     let mut render_nodes = std::fs::read_dir("/dev/dri")
         .into_iter()
         .flatten()
@@ -66,30 +70,29 @@ fn startup_media_signature(screens: &Result<Vec<capture::Screen>, String>) -> St
             .ok()
             .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|elapsed| elapsed.as_secs());
-        Some((path.to_string_lossy().into_owned(), metadata.len(), modified))
+        Some((
+            path.to_string_lossy().into_owned(),
+            metadata.len(),
+            modified,
+        ))
     })
-        .collect::<Vec<_>>();
+    .collect::<Vec<_>>();
     va_drivers.sort_by(|left, right| left.0.cmp(&right.0));
-    let environment = serde_json::to_vec(&(screens, environment, render_nodes, va_drivers))
-        .unwrap_or_default();
-    format!("{:x}", sha2::Sha256::digest(environment))
+    let environment =
+        serde_json::to_vec(&(screens, environment, render_nodes, va_drivers)).unwrap_or_default();
+    hex::encode(sha2::Sha256::digest(environment))
 }
 
-#[cfg(target_os = "linux")]
 fn startup_media_check_path() -> anyhow::Result<std::path::PathBuf> {
     Ok(crate::platform::paths::require_local_app_data()?.join("OpenUUYC/host-media-check.json"))
 }
 
-#[cfg(target_os = "linux")]
 fn startup_media_check(signature: &str) -> Option<bool> {
-    let check: StartupMediaCheck = serde_json::from_slice(
-        &std::fs::read(startup_media_check_path().ok()?).ok()?,
-    )
-    .ok()?;
+    let check: StartupMediaCheck =
+        serde_json::from_slice(&std::fs::read(startup_media_check_path().ok()?).ok()?).ok()?;
     (check.signature == signature).then_some(check.succeeded)
 }
 
-#[cfg(target_os = "linux")]
 fn save_startup_media_check(signature: String, succeeded: bool) {
     let result = (|| -> anyhow::Result<()> {
         let path = startup_media_check_path()?;
@@ -416,7 +419,7 @@ impl Handle {
     }
     // Only the installed Windows service's resident owner cancels an update;
     // a desktop client's update exit never returns.
-    #[cfg_attr(not(windows), allow(dead_code))]
+    #[allow(dead_code)]
     pub(crate) fn cancel_update(&self) {
         lock(&self.ownership).updating = false;
         if let Err(error) = super::update_resume::clear(&self.scope) {
@@ -491,7 +494,7 @@ impl Handle {
             tracing::info!("host media probe deferred until an authorized incoming session");
             return Ok(());
         }
-        #[cfg(target_os = "linux")]
+
         {
             let screens = capture::screens().map_err(|error| format!("{error:#}"));
             let signature = startup_media_signature(&screens);
@@ -519,39 +522,20 @@ impl Handle {
                 return Ok(());
             };
             let owner = self.clone();
+            let probe_cancel = cancel.clone();
             let result = self
                 .media
                 .prepare(
                     screen,
                     self.encoding_settings().gpu_compatibility,
-                    move || !cancel.is_cancelled() && lock(&owner.ownership).active,
+                    move || !probe_cancel.is_cancelled() && lock(&owner.ownership).active,
                 )
                 .await;
             if cancel.is_cancelled() {
                 return Ok(());
             }
             save_startup_media_check(signature, result.is_ok());
-            result
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            let screens = capture::screens()?;
-            let Some(screen) = screens
-                .iter()
-                .find(|screen| screen.primary)
-                .or(screens.first())
-                .cloned()
-            else {
-                return Ok(());
-            };
-            let owner = self.clone();
-            self.media
-                .prepare(
-                    screen,
-                    self.encoding_settings().gpu_compatibility,
-                    move || !cancel.is_cancelled() && lock(&owner.ownership).active,
-                )
-                .await
+            result.map(|_| ())
         }
     }
     pub(crate) async fn invalidate_media(&self) {
@@ -571,7 +555,7 @@ impl Handle {
     fn load_store(account: &str, device: &str, store: anyhow::Result<settings::Store>) -> Self {
         use sha2::{Digest, Sha256};
         let mut handle = Self::default();
-        handle.scope = format!("{:x}", Sha256::digest(format!("{account}\0{device}")));
+        handle.scope = hex::encode(Sha256::digest(format!("{account}\0{device}")));
         let result = store.and_then(|store| {
             handle.store = Some(store.clone());
             store.load()

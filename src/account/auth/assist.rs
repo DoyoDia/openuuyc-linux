@@ -19,10 +19,7 @@ impl AssistCodeStore {
             bail!("无法确定验证码所属账号");
         }
         Ok(Self {
-            service: format!(
-                "com.openuuyc.assist.{:x}",
-                Sha256::digest(user_id.as_bytes())
-            ),
+            service: format!("com.openuuyc.assist.{}", hex::encode(Sha256::digest(user_id.as_bytes()))),
         })
     }
 

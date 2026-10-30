@@ -35,7 +35,7 @@ pub(super) fn header(
 pub(super) fn glyph(ui: &mut egui::Ui, icon: Icon, label: &str, color: Color32) -> egui::Response {
     let (_, response) = crate::ui::controls::icon_button_area(ui, theme::CONTROL_HEIGHT);
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
+        egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label)
     });
     paint_icon(
         ui.painter(),
@@ -68,9 +68,9 @@ pub(super) fn copy_value(
     value: Option<&str>,
     feedback: &str,
 ) {
-    let copied_id = ui.id().with(("assist-copy", salt));
+    let copied_id = ui.scope_id().with(("assist-copy", salt));
     // Keep only a short-lived value fingerprint, never the credential text.
-    let fingerprint = egui::Id::new(value);
+    let fingerprint = egui::Id::unique(value);
     let copied = ui
         .ctx()
         .data(|data| data.get_temp::<(Instant, egui::Id)>(copied_id));
@@ -92,7 +92,7 @@ pub(super) fn copy_value(
         .inner;
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
-            egui::WidgetType::Button,
+            egui::Role::Button,
             ui.is_enabled() && value.is_some(),
             feedback.trim_start_matches("已"),
         )
@@ -251,7 +251,7 @@ pub(super) fn recent_item(
     );
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
-            egui::WidgetType::Button,
+            egui::Role::Button,
             enabled,
             format!("连接 {}", item.title()),
         )

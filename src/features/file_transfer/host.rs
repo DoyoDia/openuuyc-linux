@@ -53,16 +53,7 @@ pub(super) fn failure(error: &anyhow::Error) -> i32 {
     if let Some(code) = error.downcast_ref::<ErrorCode>() {
         return code.0;
     }
-    #[cfg(windows)]
-    if let Some(e) = error.downcast_ref::<std::io::Error>() {
-        return match e.raw_os_error() {
-            Some(2 | 3) => 9,
-            Some(5 | 32 | 33) => 4,
-            Some(39 | 112) => 5,
-            _ => 6,
-        };
-    }
-    #[cfg(not(windows))]
+
     if let Some(e) = error.downcast_ref::<std::io::Error>() {
         use std::io::ErrorKind::*;
         return match e.kind() {

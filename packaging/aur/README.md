@@ -20,13 +20,13 @@ autostart entry `~/.config/autostart/openuuyc.desktop` on those that do not
 
 A release is a tag `v<Cargo version>-linux.<n>` on DoyoDia/openuuyc-linux, for
 example `v1.0.1-linux.1`. When `linux-port` reaches a Cargo version that has
-no release yet, `linux-auto-release.yml` tags that commit `v<version>-linux.1`
+no release yet, `when_pr.yml` tags that commit `v<version>-linux.1`
 by itself; later rebuilds of the same version are tagged by hand
 (`-linux.2`, ...). A tag starts two workflows that attach to the same GitHub
 release (alpha, beta and rc versions are marked pre-release):
 
-- `linux-deb.yml`: the Debian/Ubuntu `.deb`;
-- `linux-release.yml`: the Arch-built binary and
+- `build-dpkg.yml`: the Debian/Ubuntu `.deb`;
+- `build-pacman.yml`: the Arch-built binary and
   `OpenUUYC-<version>-x86_64-linux.tar.zst`, which has the repository's
   layout (binary, `packaging/`, `assets/icon-256.png`, licenses and
   `install-omarchy.sh`). `openuuyc-bin` installs from this archive.

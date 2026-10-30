@@ -61,7 +61,7 @@ impl Store {
     pub fn new(account: &str, device: &str) -> Result<Self> {
         ensure!(!account.is_empty(), "无法确定被控设置所属账号");
         crate::account::api::validate_device_id(device)?;
-        let service = format!("com.openuuyc.host.{:x}", Sha256::digest(account.as_bytes()));
+        let service = format!("com.openuuyc.host.{}", hex::encode(Sha256::digest(account.as_bytes())));
         Ok(Self(Arc::new(
             Entry::new(&service, device).map_err(|_| anyhow::anyhow!("被控设置存储不可用"))?,
         )))

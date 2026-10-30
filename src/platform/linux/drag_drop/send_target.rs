@@ -361,7 +361,7 @@ impl crate::ui::App for Window {
         };
         // Only the header moves the window; rows and buttons keep their input.
         let header = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 64.));
-        let response = ui.interact(header, ui.id().with("header"), egui::Sense::drag());
+        let response = ui.interact(header, ui.scope_id().with("header"), egui::Sense::drag());
         if response.drag_started() {
             self.moved = true;
             context.send_viewport_cmd(egui::ViewportCommand::StartDrag);

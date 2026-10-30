@@ -51,7 +51,7 @@ fn smoothstep(value: f32) -> f32 {
 pub(super) fn show(ctx: &egui::Context, health: &Assessment, bounds: Rect) {
     let now = Instant::now();
     // Each viewer context owns a bounded set of paint-only animation states.
-    let state_id = egui::Id::new("performance-alert-transitions");
+    let state_id = egui::Id::unique("performance-alert-transitions");
     type Transitions = [Option<IconTransition>; ORDER.len()];
     let count = health.alerts.iter().filter(|a| a.expires_at > now).count();
     if count == 0 || bounds.width() < SIZE + MARGIN * 2.0 || bounds.height() < SIZE + MARGIN * 2.0 {

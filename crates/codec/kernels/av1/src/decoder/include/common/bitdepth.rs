@@ -3,7 +3,7 @@ use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::ops::{Add, Div, Mul, Rem, Shr};
 
-use zerocopy::{AsBytes, FromBytes};
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::decoder::align::{Align16, Align8};
 use crate::decoder::include::common::intops::clip;
@@ -144,7 +144,9 @@ pub trait BitDepth: Clone + Copy {
         + ToPrimitive<c_int>
         + ToPrimitive<c_uint>
         + FromBytes
-        + AsBytes;
+        + IntoBytes
+        + KnownLayout
+        + Immutable;
 
     type AlignPixelX8: Copy;
 
@@ -159,7 +161,9 @@ pub trait BitDepth: Clone + Copy {
         + ToPrimitive<c_uint>
         + Add<Output = Self::Coef>
         + FromBytes
-        + AsBytes
+        + IntoBytes
+        + KnownLayout
+        + Immutable
         + Display;
 
     type BitDepthMax;

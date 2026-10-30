@@ -37,7 +37,7 @@ pub(super) fn show_compact_performance(
 ) {
     ctx.request_repaint_after(Duration::from_millis(50));
     egui::Window::new("性能简报")
-        .id(egui::Id::new("performance-compact"))
+        .id(egui::Id::unique("performance-compact"))
         // This HUD has no controls. In particular, it must not become the
         // foreground layer used by the raw-mouse and annotation hit tests.
         .interactable(false)
@@ -112,7 +112,7 @@ pub(super) fn compact_audio_meter(
         }
     });
     let now = ui.input(|input| input.time);
-    let peak_id = ui.id().with("stereo-meter-peaks");
+    let peak_id = ui.scope_id().with("stereo-meter-peaks");
     let peaks = ui.ctx().data_mut(|data| {
         let mut peaks = data
             .get_temp::<[(f32, f64); 2]>(peak_id)

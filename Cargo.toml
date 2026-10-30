@@ -46,8 +46,8 @@ assets = [
     ["packaging/linux/app-openuuyc.service", "usr/lib/systemd/user/", "644"],
     ["packaging/linux/openuuyc.service", "usr/lib/systemd/user/", "644"],
     ["README.md", "usr/share/doc/openuuyc/", "644"],
-    ["THIRD_PARTY_NOTICES", "usr/share/doc/openuuyc/", "644"],
-    ["assets/licenses/*", "usr/share/doc/openuuyc/licenses/", "644"],
+    ["NOTICES.md", "usr/share/doc/openuuyc/", "644"],
+    ["LICENSE", "usr/share/doc/openuuyc/licenses/", "644"],
 ]
 # 只为 openuuyc-vkms 的两个单元生成维护者脚本（packaging/linux 里没有自己写的脚本）：
 # 卸载时停掉套接字与服务、daemon-reload，清除时清掉 enable 留下的链接；升级时只
@@ -58,145 +58,77 @@ maintainer-scripts = "packaging/linux"
 systemd-units = { unit-name = "openuuyc-vkms", enable = false, start = false }
 
 [dependencies]
-anyhow = "1.0"
-async-trait = "0.1"
+hex = "0.4.3"
+anyhow = "1.0.104"
+async-trait = "0.1.92"
 bytemuck = { version = "1.25.2", features = ["derive", "min_const_generics"] }
-base64 = "0.22.1"
-bytes = "1.11.1"
+base64 = "0.23.1"
+bytes = "1.12.1"
 crossbeam-queue = "0.3.14"
 cpal = "0.18.2"
 clap = { version = "4.6.7", features = ["derive"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
-dunce = "1.0"
-egui = { version = "0.36.1", default-features = false, features = ["bytemuck"] }
+dunce = "1.0.5"
+egui = { version = "0.37.0", default-features = false, features = ["bytemuck"] }
 flate2 = "1.1.10"
 futures-util = "0.3.34"
 goog_cc = { path = "vendor/goog_cc" }
 # NVENC hardware encoding for the host role (driver library loaded at run time).
 openuuyc-nvenc-sys = { path = "vendor/nvenc-sys" }
-hmac = "0.12.1"
-hyper = { version = "1.11.1", default-features = false }
+hmac = "0.13.0"
+hyper = { version = "1.12.0", default-features = false }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "bmp", "tiff"] }
-keyring = "4.1.6"
-keyring-core = "=1.0.0"
+keyring = "4.2.0"
+keyring-core = "=1.0.1"
 kcp = { path = "vendor/kcp" }
 opusic-c = "1.6.1"
 qrcode = { version = "0.14.1", default-features = false }
-rand = "0.9"
-prost = "0.14"
+rand = "0.10.3"
+prost = "0.14.4"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls-no-provider", "system-proxy", "gzip"] }
-rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
-rustls-native-certs = "0.8.4"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-semver = "1.0"
-sha2 = "0.10.9"
-tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8.5"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+semver = "1.0.28"
+sha2 = "0.11.1"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
-tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring", "tls12"] }
-tokio-util = { version = "0.7", features = ["rt"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+tokio-util = { version = "0.7.20", features = ["rt"] }
 thiserror = "2.0.21"
 tracing = "0.1.44"
-tracing-appender = "0.2.4"
-tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2.5"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 url = "2.5.8"
-uuid = { version = "1.25.0", features = ["v4", "v5"] }
+uuid = { version = "1.29.0", features = ["v4", "v5"] }
 webrtc = { path = "vendor/webrtc" }
 webrtc-srtp = "0.17.2"
-yuv = "0.8.17"
-object = { version = "0.37.3", default-features = false, features = ["read_core", "std", "pe"] }
+yuv = "0.8.19"
+object = { version = "0.40.0", default-features = false, features = ["read_core", "std", "pe"] }
 openuuyc-plugin-api = { path = "plugins/sdk" }
-libloading = "0.8.9"
+libloading = "0.9.0"
 openuuyc-codec = { path = "crates/codec" }
-egui-winit = { version = "0.36.1", default-features = false, features = ["clipboard", "links"] }
+egui-winit = { version = "0.37.0", default-features = false, features = ["clipboard", "links"] }
 winit = { version = "0.30.13", default-features = false, features = ["rwh_06"] }
-zip = { version = "8.6.0", default-features = false, features = ["zstd"] }
+zip = { version = "9.1.3", default-features = false, features = ["zstd"] }
 regex = "1.13.1"
 
 # The host terminal keeps each session's screen as a terminal model rather
 # than a byte log, so a reattach replays what was on screen instead of
 # re-feeding raw output that may be cut mid-sequence. This is the upstream
 # crate the reference server's `vt100-psmux` fork is based on.
-vt100 = "0.16"
+vt100 = "0.18.1"
 
 [build-dependencies]
-cc = "1.2"
-embed-resource = "3.0.11"
-epaint_default_fonts = "=0.36.1"
+cc = "1.10.0"
+epaint_default_fonts = { version = "=0.37.0", features = ["monochrome_emoji_fonts"] }
 flate2 = "1.1.10"
 
-[target.'cfg(windows)'.dependencies]
-openuuyc-bootstrap = { path = "crates/bootstrap" }
-# Required by the generated code of #[windows::core::implement].
-windows-core = "0.62.2"
-# The host role's Intel VPL and AMD AMF encoders beside NVENC.
-openuuyc-amf-sys = { path = "vendor/amf-sys" }
-openuuyc-vpl-sys = { path = "vendor/vpl-sys" }
-egui-directx11 = { path = "vendor/egui-directx11" }
-windows = { version = "0.62.2", default-features = false, features = [
-    "Foundation",
-    "Data_Xml_Dom",
-    "UI_Notifications",
-    "Win32_System_WinRT",
-    "Win32_System_Variant",
-    "Win32_Devices_Display",
-    "Win32_Devices_DeviceAndDriverInstallation",
-    "Win32_System_IO",
-    "Win32_Foundation",
-    "Win32_Media_Audio",
-    "Win32_NetworkManagement_IpHelper",
-    "Win32_NetworkManagement_Ndis",
-    "Win32_Networking_WinSock",
-    "Win32_Graphics_Direct3D",
-    "Win32_Graphics_Direct3D11",
-    "Win32_Graphics_Direct3D12",
-    "Win32_Graphics_DirectComposition",
-    "Win32_Graphics_Dxgi",
-    "Win32_Graphics_Dxgi_Common",
-    "Win32_Graphics_Dwm",
-    "Win32_Graphics_Gdi",
-    "Win32_Graphics_GdiPlus",
-    "Win32_System_Console",
-    "Win32_System_Com",
-    "Win32_System_Com_StructuredStorage",
-    "Win32_System_Ole",
-    "Win32_System_SystemServices",
-    "Win32_System_DataExchange",
-    "Win32_System_Memory",
-    "Win32_System_Performance",
-    "Win32_System_Power",
-    "Win32_System_Threading",
-    "Win32_System_Diagnostics_ToolHelp",
-    "Win32_System_Diagnostics_Debug",
-    "Win32_System_SystemInformation",
-    "Win32_System_Registry",
-    "Win32_System_JobObjects",
-    "Win32_System_Environment",
-    "Win32_System_RemoteDesktop",
-    "Win32_Storage_FileSystem",
-    "Win32_System_LibraryLoader",
-    "Win32_Security",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_UI_Input_Pointer",
-    "Win32_UI_HiDpi",
-    "Win32_System_StationsAndDesktops",
-    "Win32_System_Services",
-    "Win32_System_Pipes",
-    "Win32_System_Shutdown",
-    "Win32_Security_Authorization",
-    "Win32_Security_WinTrust",
-    "Win32_Security_Cryptography",
-    "Win32_UI_Input_Ime",
-    "Win32_UI_Shell",
-    "Win32_UI_Shell_PropertiesSystem",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_UI_Accessibility",
-] }
-
 [target.'cfg(target_os = "linux")'.dependencies]
-glow = "0.17.0"
+glow = "0.18.0"
 # Local display geometry for the viewer, on X11 and Wayland alike.
-display-info = "0.5.9"
+display-info = "0.5.10"
 # 被控端加虚拟屏要写 configfs，只有 root 能写，中间隔一个专用的辅助程序
 # （crates/vkms）。这里用的是它的客户端部分。
 openuuyc-vkms = { path = "crates/vkms" }
@@ -204,53 +136,48 @@ cros-libva = { path = "vendor/cros-libva" }
 # The H.264 syntax and its error kinds for the VA-API slice parameters; the
 # software session itself goes through openuuyc-codec like on Windows.
 openuuyc-h264 = { path = "crates/codec/kernels/h264" }
-egui-wgpu = { version = "0.36.1", default-features = false }
-wgpu = { version = "30.0", default-features = false, features = ["vulkan", "gles", "wgsl"] }
-egui-winit = { version = "0.36.1", default-features = false, features = ["clipboard", "links", "x11", "wayland"] }
+egui-wgpu = { version = "0.37.0", default-features = false }
+wgpu = { version = "30.0.1", default-features = false, features = ["vulkan", "gles", "wgsl"] }
+egui-winit = { version = "0.37.0", default-features = false, features = ["clipboard", "links", "x11", "wayland"] }
 winit = { version = "0.30.13", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
-arboard = { version = "3.6.1", default-features = false, features = ["image-data", "wayland-data-control"] }
+arboard = { version = "3.7.0", default-features = false, features = ["image-data", "wayland-data-control"] }
 # Reading the clipboard's MIME types costs one Wayland round trip, where
 # `arboard`'s getters each open a connection and pull the whole payload. The
 # poll below checks the types first and only reads contents when they change.
-wl-clipboard-rs = { version = "0.9", default-features = false }
+wl-clipboard-rs = { version = "0.9.5", default-features = false }
 # Wayland 文本输入：zwp_virtual_keyboard 允许自带 keymap，能输入键位表里没有的字符
 # （中文等）。XTest 只能影响 XWayland 客户端，uinput 又无法携带 keymap。
-wayland-client = { version = "0.31", default-features = false }
-wayland-protocols-misc = { version = "0.3", default-features = false, features = ["client"] }
+wayland-client = { version = "0.31.15", default-features = false }
+wayland-protocols-misc = { version = "0.3.12", default-features = false, features = ["client"] }
 # 被控绝对定位读 xdg_output 的逻辑布局；主控「拦截本机快捷键」用
 # zwp_keyboard_shortcuts_inhibit_v1 让合成器在播放窗口有键盘焦点时让出自己的
 # 快捷键（两者在 unstable 后面）；再次启动时用 xdg_activation_v1 凭启动令牌把
 # 已在运行的控制中心提到前台（staging）。
-wayland-protocols = { version = "0.32", default-features = false, features = ["client", "staging", "unstable"] }
+wayland-protocols = { version = "0.32.13", default-features = false, features = ["client", "staging", "unstable"] }
 # wlr-screencopy, the compositor's own copy protocol: niri, wlroots and
 # everything built on them serve it, and unlike the portal it never asks the
 # local user for consent. The same crate also gives the layer shell, which the
 # Wayland drag-out catcher puts its transparent surface on.
-wayland-protocols-wlr = { version = "0.3", default-features = false, features = ["client"] }
-libc = "0.2"
-fuser = { version = "0.15", default-features = false }
-x11rb = { version = "0.13", features = ["dpms", "randr", "shm", "xfixes", "xtest"] }
+wayland-protocols-wlr = { version = "0.3.12", default-features = false, features = ["client"] }
+libc = "0.2.191"
+fuser = { version = "0.18.0", default-features = false }
+x11rb = { version = "0.14.0", features = ["dpms", "randr", "shm", "xfixes", "xtest"] }
 # Notification-area icon (StatusNotifierItem), the counterpart of the Windows tray.
 # zbus must stay on async-io: its tokio feature is global, and makes the
 # blocking Secret Service calls of the keyring panic inside our runtime.
-ksni = { version = "0.3.6", default-features = false, features = ["blocking", "async-io"] }
+ksni = { version = "0.3.7", default-features = false, features = ["blocking", "async-io"] }
 # Desktop notifications (org.freedesktop.Notifications), the counterpart of
 # Windows toasts; the same async-io zbus as above.
-zbus = { version = "5.19", default-features = false, features = ["async-io", "blocking-api"] }
+# zbus 6 removed the blocking API used by the desktop integration.
+zbus = { version = "5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
 # Host capture through the XDG ScreenCast portal (Wayland, and X11 on request).
 ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "screencast"] }
-pollster = "0.4"
+pollster = "1.0.1"
 # Playback and microphone through the sound server's own protocol (PulseAudio,
 # or PipeWire's pulse service) on one connection, as Sunshine does; ALSA's
 # pulse plugin opens a new server connection for every device probe.
 # cpal::default_host() picks it when the server is there, ALSA otherwise.
 cpal = { version = "0.18.2", features = ["pulseaudio"] }
-
-# Only the host terminal exists on macOS so far. It needs no driver, no
-# display server and no encoder — a pty is the whole requirement — so libc
-# is the entire dependency set until the rest of the platform lands.
-[target.'cfg(target_os = "macos")'.dependencies]
-libc = "0.2"
 
 [patch.crates-io]
 dtls = { path = "vendor/dtls" }

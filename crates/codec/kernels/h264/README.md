@@ -6,7 +6,7 @@ Rust H.264 decoding and low-delay desktop encoding used by OpenUUYC.
 - Encoder: low-delay desktop video with bitrate/frame-rate updates and keyframe requests.
 - Portable DSP with runtime-selected SSE2, SSSE3 and AVX2 implementations.
 
-```powershell
+```bash
 cargo test --manifest-path crates/codec/Cargo.toml -p openuuyc-h264 --lib
 ```
 
@@ -17,5 +17,5 @@ there is no oxideav runtime dependency.
 The crate does not link FFmpeg or OpenH264. FFmpeg-derived code retains
 LGPL-2.1-or-later and original author notices; see [COPYING.LGPLv2.1](COPYING.LGPLv2.1).
 OpenH264-derived encoder algorithms retain the
-[BSD notice](../../../../licenses/openh264-algorithms.txt).
-Component provenance is recorded in [THIRD_PARTY_NOTICES](../../../../THIRD_PARTY_NOTICES).
+[BSD notice](../../../../LICENSE).
+Component provenance is recorded in [NOTICES.md](../../../../NOTICES.md).

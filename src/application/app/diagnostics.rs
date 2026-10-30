@@ -1,4 +1,4 @@
-//! Local diagnostics use the same Windows fact collector as device registration.
+//! Local diagnostics use the same Linux fact collector as device registration.
 use crate::media::LocalDisplayInfo;
 use crate::media::decoder::diagnostics::{self as decoding, Event, Report, Status};
 

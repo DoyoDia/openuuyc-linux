@@ -69,17 +69,10 @@ impl Lease {
                                     return false;
                                 }
                                 // The owning window must still be in the foreground.
-                                #[cfg(windows)]
-                                {
-                                    unsafe {
-                                        windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow()
-                                    }
-                                    .0 as u64
-                                        == owner
-                                }
+
                                 // Neither X11 nor Wayland exposes the focused window
                                 // to an unfocused process; the gate is the only check.
-                                #[cfg(not(windows))]
+
                                 {
                                     let _ = owner;
                                     true

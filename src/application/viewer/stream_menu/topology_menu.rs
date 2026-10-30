@@ -13,13 +13,13 @@ struct Confirmation {
 }
 
 fn confirmation_id() -> egui::Id {
-    egui::Id::new("display-topology-confirmation")
+    egui::Id::unique("display-topology-confirmation")
 }
 
 pub(in crate::application::viewer) fn owns_input(ctx: &egui::Context) -> bool {
     ctx.data(|d| {
         d.get_temp::<Confirmation>(confirmation_id()).is_some()
-            || d.get_temp::<String>(egui::Id::new("display-topology-local-error"))
+            || d.get_temp::<String>(egui::Id::unique("display-topology-local-error"))
                 .is_some()
     })
 }
@@ -138,7 +138,7 @@ pub(super) fn show(
                 && s.display.screen_type == pending.target.display.screen_type
         });
     let mut close = false;
-    egui::Modal::new(egui::Id::new("display-topology-modal")).frame(crate::ui::controls::dialog_frame()).show(ctx, |ui| {
+    egui::Modal::new(egui::Id::unique("display-topology-modal")).frame(crate::ui::controls::dialog_frame()).show(ctx, |ui| {
         crate::ui::controls::configure(ui.style_mut(), crate::ui::theme::CONTROL_HEIGHT);
         ui.set_width(340.0);
         close = crate::ui::controls::dialog_header(ui,pending.action.label(),crate::ui::controls::DialogIcon::Warning,true);
@@ -165,7 +165,7 @@ pub(super) fn show(
                             action => action,
                         }
                     }) {
-                    ctx.data_mut(|d| d.insert_temp(egui::Id::new("display-topology-local-error"), error.to_string()));
+                    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("display-topology-local-error"), error.to_string()));
                 }
                 close = true;
             }
@@ -181,14 +181,14 @@ pub(super) fn show(
 
 pub(super) fn show_error(ctx: &egui::Context, handle: &StreamControlHandle) {
     let status = handle.snapshot().topology;
-    let local_id = egui::Id::new("display-topology-local-error");
+    let local_id = egui::Id::unique("display-topology-local-error");
     let local: Option<String> = ctx.data(|d| d.get_temp(local_id));
     let error = local.as_deref().or_else(|| {
         (status.error && !status.dismissed && ctx.input(|i| i.viewport().focused.unwrap_or(false)))
             .then_some(status.message.as_str())
     });
     if let Some(error) = error {
-        egui::Modal::new(egui::Id::new("display-topology-error"))
+        egui::Modal::new(egui::Id::unique("display-topology-error"))
             .frame(crate::ui::controls::dialog_frame())
             .show(ctx, |ui| {
                 ui.set_width(340.0);

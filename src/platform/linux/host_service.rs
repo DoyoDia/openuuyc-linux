@@ -41,10 +41,7 @@ pub(crate) mod vault {
     }
     pub(crate) fn key(service: &str, account: &str) -> String {
         use sha2::{Digest, Sha256};
-        format!(
-            "{:x}.secret",
-            Sha256::digest(format!("{service}\0{account}"))
-        )
+        format!("{}.secret", hex::encode(Sha256::digest(format!("{service}\0{account}"))))
     }
     pub(crate) fn read(_key: &str) -> Result<Option<Vec<u8>>> {
         bail!(NO_SERVICE)

@@ -232,7 +232,7 @@ pub(super) fn receive(
     ensure!(
         session
             .incoming_drops
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < 4)
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < 4)
                 .then_some(n + 1))
             .is_ok(),
         "正在接收的拖放过多"

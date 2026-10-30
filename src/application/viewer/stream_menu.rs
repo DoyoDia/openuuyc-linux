@@ -140,7 +140,7 @@ fn switch_row(ui: &mut egui::Ui, label: &str, value: &mut bool) -> egui::Respons
         response.mark_changed();
     }
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *value, label)
+        egui::WidgetInfo::selected(egui::Role::CheckBox, ui.is_enabled(), *value, label)
     });
     if enabled && response.hovered() {
         ui.painter().rect_filled(row, 4.0, HOVER);
@@ -170,7 +170,7 @@ fn speaker_button(ui: &mut egui::Ui, volume: u8, muted: &mut bool) {
         response.mark_changed();
     }
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *muted, "静音")
+        egui::WidgetInfo::selected(egui::Role::CheckBox, ui.is_enabled(), *muted, "静音")
     });
     if response.hovered() || response.has_focus() {
         ui.painter().rect_filled(rect, 4.0, HOVER);
@@ -604,7 +604,7 @@ pub(super) fn show_stream_control_window(
         WIDTH
     };
     egui::Window::new("串流画质")
-        .id(egui::Id::new("runtime-stream-settings-window"))
+        .id(egui::Id::unique("runtime-stream-settings-window"))
         .open(&mut open)
         .collapsible(false)
         .auto_sized()
@@ -1238,7 +1238,7 @@ crate::ui::controls::observe_notice(ui.ctx(), "clipboard-error", "剪贴板同�
         });
     if let Some((target, proposed)) = state.format_confirm {
         let current = handle.snapshot().settings;
-        let response = egui::Modal::new(egui::Id::new("stream-format-confirmation"))
+        let response = egui::Modal::new(egui::Id::unique("stream-format-confirmation"))
             .frame(crate::ui::controls::dialog_frame())
             .show(ctx, |ui| {
                 ui.set_width(340.0);

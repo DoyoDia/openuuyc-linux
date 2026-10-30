@@ -35,7 +35,7 @@ fn fill_level_row(cache: &DisjointMut<AlignedVec2<u8>>, at: usize, count: usize,
     #[cfg(debug_assertions)]
     for x in 0..count {
         let mut cell = cache.index_mut((at + x * 4.., ..2));
-        *u16::mut_from(&mut *cell).unwrap() = value;
+        *u16::mut_from_bytes(&mut *cell).unwrap() = value;
     }
     #[cfg(not(debug_assertions))]
     {
@@ -483,7 +483,7 @@ pub(crate) fn rav1d_create_lf_mask_intra(
     let by4 = by & 31;
 
     let filter_level_yuv = filter_level.0.map(|a| a[0][0]);
-    let [filter_level_y, filter_level_uv] = *<[u16; 2]>::ref_from(&filter_level_yuv).unwrap();
+    let [filter_level_y, filter_level_uv] = *<[u16; 2]>::ref_from_bytes(&filter_level_yuv).unwrap();
 
     if bw4 != 0 && bh4 != 0 {
         let mut level_cache_off = by * b4_stride + bx;
@@ -572,7 +572,7 @@ pub(crate) fn rav1d_create_lf_mask_inter(
     let by4 = by & 31;
 
     let filter_level_yuv = filter_level.0.map(|a| a[r#ref][is_gmv]);
-    let [filter_level_y, filter_level_uv] = *<[u16; 2]>::ref_from(&filter_level_yuv).unwrap();
+    let [filter_level_y, filter_level_uv] = *<[u16; 2]>::ref_from_bytes(&filter_level_yuv).unwrap();
 
     if bw4 != 0 && bh4 != 0 {
         let mut level_cache_off = by * b4_stride + bx;

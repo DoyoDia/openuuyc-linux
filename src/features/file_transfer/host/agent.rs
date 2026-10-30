@@ -3,8 +3,7 @@
 //! Linux has no system service yet, so the engine always runs in the desktop
 //! user's own process there (the portable mode).
 use super::*;
-#[cfg(windows)]
-use crate::platform::windows::host_service::{pipe::Pipe, process, vault};
+
 use std::{
     sync::{
         Mutex,
@@ -12,8 +11,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-#[cfg(windows)]
-const PREFIX: &str = r"\\.\pipe\OpenUUYC.Files.";
+
 #[derive(prost::Message)]
 struct Request {
     #[prost(message, optional, tag = "6")]
@@ -197,53 +195,10 @@ impl Drop for Local {
     }
 }
 
-#[cfg(windows)]
-struct Remote {
-    pipe: Pipe,
-    agent: crate::platform::windows::host_service::user_backend::Lease,
-    session: u32,
-}
-#[cfg(windows)]
-impl Remote {
-    fn new(stop: &CancellationToken) -> Result<Self> {
-        let session = process::active_session();
-        let name = format!("{PREFIX}{}", uuid::Uuid::new_v4().simple());
-        let pipe = Pipe::server(&name, true)?;
-        let agent = crate::platform::windows::host_service::user_backend::Lease::connect(
-            crate::platform::windows::host_service::user_backend::Role::Files,
-            &name,
-            session,
-            || !stop.is_cancelled(),
-        )?;
-        let until = Instant::now() + Duration::from_secs(10);
-        pipe.accept(|| !stop.is_cancelled() && agent.alive() && Instant::now() < until)?;
-        ensure!(
-            pipe.peer_pid(true)? == agent.pid && pipe.peer_session(true)? == session,
-            "文件用户进程身份不符"
-        );
-        Ok(Self {
-            pipe,
-            agent,
-            session,
-        })
-    }
-    fn exchange(&self, request: &Request, stop: &CancellationToken) -> Result<Reply> {
-        let allowed = || {
-            !stop.is_cancelled() && self.agent.alive() && process::active_session() == self.session
-        };
-        self.pipe.send_raw(request.encode_to_vec(), allowed)?;
-        Reply::decode(
-            self.pipe
-                .receive_raw(Duration::from_secs(10), allowed)?
-                .as_slice(),
-        )
-        .map_err(Into::into)
-    }
-}
 /// The SYSTEM service process, which must hand disk work to a user child.
-#[cfg(not(windows))]
+
 enum Remote {}
-#[cfg(not(windows))]
+
 impl Remote {
     fn new(_stop: &CancellationToken) -> Result<Self> {
         anyhow::bail!("Linux 没有系统服务进程")
@@ -261,9 +216,6 @@ fn worker(
     stop: CancellationToken,
     updates: notices::Journal,
 ) -> Result<()> {
-    #[cfg(windows)]
-    let system = vault::sid(std::process::id())? == "S-1-5-18";
-    #[cfg(not(windows))]
     let system = false;
     let mut local = if system {
         None
@@ -294,13 +246,7 @@ fn worker(
                 .filter(|(g, _)| *g == revision)
                 .map(|(_, p)| p)
                 .collect();
-            #[cfg(windows)]
-            if remote
-                .as_ref()
-                .is_some_and(|r| r.session != process::active_session())
-            {
-                anyhow::bail!("文件用户会话已切换");
-            }
+
             if system && remote.is_none() && requested && Instant::now() >= retry {
                 match Remote::new(&stop) {
                     Ok(r) => remote = Some(r),
@@ -372,16 +318,6 @@ fn worker(
                 }
             }
         }
-        #[cfg(windows)]
-        {
-            let Remote { pipe, agent, .. } = remote;
-            // EOF cancels the private job even when the close exchange failed.
-            // Its separate control pipe still confirms real resource teardown.
-            drop(pipe);
-            if let Err(error) = agent.finish() {
-                tracing::debug!(%error, "file user job ended without a clean finish reply");
-            }
-        }
     }
     if let Some(local) = &mut local {
         if let Some(engine) = local.engine.take() {
@@ -393,43 +329,4 @@ fn worker(
     }
     drop(local);
     if stop.is_cancelled() { Ok(()) } else { result }
-}
-#[cfg(windows)]
-pub(crate) fn run(name: &str, parent: u32) -> Result<()> {
-    ensure!(
-        name.starts_with(PREFIX) && name.len() < 150,
-        "文件代理管道无效"
-    );
-    ensure!(
-        vault::sid(std::process::id())? != "S-1-5-18",
-        "文件执行不能使用SYSTEM身份"
-    );
-    let pipe = Pipe::client(name)?.context("文件代理连接已结束")?;
-    let session = process::session(std::process::id())?;
-    ensure!(
-        pipe.peer_pid(false)? == parent && pipe.peer_session(false)? == session,
-        "文件代理父进程不符"
-    );
-    let permitted = || {
-        crate::platform::windows::host_service::user_backend::permitted()
-            && process::active_session() == session
-            && pipe.queued_bytes().is_ok()
-    };
-    let mut local: Option<Local> = None;
-    while permitted() {
-        let request = Request::decode(
-            pipe.receive_raw(Duration::from_secs(10), permitted)?
-                .as_slice(),
-        )?;
-        let close = request.close;
-        if local.is_none() {
-            local = Some(Local::new(request.scope.clone())?);
-        }
-        let reply = local.as_mut().unwrap().exchange(request)?;
-        pipe.send_raw(reply.encode_to_vec(), permitted)?;
-        if close {
-            break;
-        }
-    }
-    Ok(())
 }

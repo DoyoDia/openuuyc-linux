@@ -9,7 +9,7 @@ pub(crate) fn input_rate_warning(ctx: &egui::Context, hz: u32, bounds: egui::Rec
     }
     let painter = ctx.layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
-        egui::Id::new("mouse-polling-warning"),
+        egui::Id::unique("mouse-polling-warning"),
     ));
     let title = painter.layout(
         format!("鼠标输入频率较高 · 约 {} Hz", hz),

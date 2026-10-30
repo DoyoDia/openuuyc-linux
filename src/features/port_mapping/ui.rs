@@ -444,7 +444,7 @@ impl Editor {
         if let Some(form) = &mut self.form {
             let mut save = false;
             let mut cancel = false;
-            let modal = egui::Modal::new(egui::Id::new("port-rule-editor"))
+            let modal = egui::Modal::new(egui::Id::unique("port-rule-editor"))
                 .frame(controls::dialog_frame())
                 .show(ctx, |ui| {
                     ui.set_width(theme::MAPPING_DIALOG_WIDTH);
@@ -560,7 +560,7 @@ impl Editor {
         if let Some(rule) = self.delete.clone() {
             let mut confirm = false;
             let mut cancel = false;
-            let modal = egui::Modal::new(egui::Id::new("port-rule-delete"))
+            let modal = egui::Modal::new(egui::Id::unique("port-rule-delete"))
                 .frame(controls::dialog_frame())
                 .show(ctx, |ui| {
                     ui.set_width(theme::MAPPING_DIALOG_WIDTH);

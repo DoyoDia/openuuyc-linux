@@ -162,8 +162,8 @@ fn local_card(
                                 }
                                 action.settings =
                                     glyph(ui, Icon::Settings, "协助设置", MUTED).clicked();
-                                let copied_id = ui.id().with("assist-share-copied");
-                                let fingerprint = egui::Id::new((
+                                let copied_id = ui.scope_id().with("assist-share-copied");
+                                let fingerprint = egui::Id::unique((
                                     &snapshot.connect_id,
                                     password,
                                     settings.mode.wire(),
@@ -307,7 +307,7 @@ impl DeviceCenterApp {
         };
         let mut save = false;
         let mut cancel = false;
-        let response = egui::Modal::new(egui::Id::new("host-assist-password-editor"))
+        let response = egui::Modal::new(egui::Id::unique("host-assist-password-editor"))
             .frame(dialog_frame())
             .show(ctx, |ui| {
                 ui.set_width(theme::MESSAGE_DIALOG_WIDTH);
@@ -385,7 +385,7 @@ impl DeviceCenterApp {
         let original_clipboard = host.clipboard_settings();
         let mut clipboard = original_clipboard;
         let mut close = false;
-        let modal = egui::Modal::new(egui::Id::new("host-assist-settings"))
+        let modal = egui::Modal::new(egui::Id::unique("host-assist-settings"))
             .frame(dialog_frame())
             .show(ctx, |ui| {
                 ui.set_width(theme::MESSAGE_DIALOG_WIDTH);

@@ -284,8 +284,6 @@ impl Shell {
                         frame.height,
                         bytemuck::cast_slice(pixels),
                     )?,
-                    // The D3D11 surface type is uninhabited off Windows.
-                    RenderSurface::D3D11(surface) => match *surface {},
                 }
             }
             player.publish(&frame, upload.elapsed());
@@ -448,8 +446,7 @@ impl ConnectingWindowsRunner {
             "player window created"
         );
         self.shell = Some(shell);
-        // Only the D3D11 path can hand a decoder its own surfaces; a Linux
-        // session always decodes into CPU frames, so the handle stays empty.
+        // Signal that the Linux display is ready before opening the decoder.
         if let Some(sender) = self.display_sender.take() {
             let _ = sender.send(ViewerDisplayHandle::default());
         }
@@ -2541,7 +2538,7 @@ impl Player {
         ui.ctx()
             .layer_painter(egui::LayerId::new(
                 egui::Order::Tooltip,
-                egui::Id::new("remote-cursor"),
+                egui::Id::unique("remote-cursor"),
             ))
             .image(
                 texture.id(),

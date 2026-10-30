@@ -16,6 +16,8 @@ mod media {
         #[derive(Clone, Copy, Debug, PartialEq)]
         pub enum Codec {
             H264,
+            H265,
+            Av1,
         }
         #[derive(Clone, Copy, Debug)]
         pub struct Format {

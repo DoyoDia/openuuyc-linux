@@ -4,20 +4,16 @@ use anyhow::Result;
 pub(crate) mod chrome;
 pub(crate) mod gfx;
 
-#[cfg(windows)]
-mod tray;
-#[cfg(target_os = "linux")]
 #[path = "tray_linux.rs"]
 mod tray;
 
-/// 已有实例的唤起通道。Windows 用注册窗口消息（见 instance.rs），其余平台没有
-/// 对应的窗口属性，Linux 用 unix socket。
-#[cfg(target_os = "linux")]
+/// 已有实例的唤起通道，通过 Unix socket 传递请求。
+
 #[path = "control_linux.rs"]
 pub(crate) mod control;
 
 /// SIGTERM/SIGINT 转成一次正常退出，服务被 `systemctl stop` 时才有收尾。
-#[cfg(target_os = "linux")]
+
 #[path = "shutdown_linux.rs"]
 pub(crate) mod shutdown;
 

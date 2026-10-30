@@ -68,17 +68,6 @@ impl Session {
 }
 
 impl State {
-    /// 建连前确认机器上有屏。没有的话，Windows 用虚拟显示驱动的常驻兜底屏，
-    /// Linux 借虚拟显示器辅助程序接一路 VKMS 连接器、再让合成器认下它。
-    #[cfg(windows)]
-    fn ensure_fallback_screen(
-        &mut self,
-        width: u32,
-        height: u32,
-    ) -> Result<Option<capture::Screen>> {
-        fallback::ensure(self.fallback_driver()?, width, height, &[], true)
-    }
-    #[cfg(not(windows))]
     fn ensure_fallback_screen(
         &mut self,
         width: u32,
@@ -127,24 +116,15 @@ impl State {
         modes: Vec<(u32, u32)>,
         lease: &Lease,
     ) -> Result<capture::Screen> {
-        #[cfg(windows)]
-        if self.fallback_pin.is_none() {
-            self.fallback_pin = fallback::pin().unwrap_or_else(|error| {
-                tracing::warn!(error=%format!("{error:#}"), "optional display driver unavailable");
-                None
-            });
-        }
         // Linux 上零输出时枚举会直接报错（`capture::screens` 把「一块屏都没有」当
         // 异常），而兜底屏要的正是这个状态，所以先按拓扑判断有没有屏。
         let targets = Topology::query(true)?.metadata()?;
         let has_display = targets.iter().any(|t| {
             // Linux 的连接但没启用的输出采集不到，不算「有屏」。
-            (t.available && (cfg!(windows) || t.active))
+            (t.available && (false || t.active))
                 && t.virtual_provider != Some(display::topology::VirtualProvider::Uu)
         });
-        #[cfg(windows)]
-        let mut screens = capture::screens()?;
-        #[cfg(not(windows))]
+
         let mut screens = if has_display {
             capture::screens()?
         } else {
@@ -186,7 +166,6 @@ impl State {
             // 做不到就照常把物理屏留着等于骗人。主控这次明确要，就带着原因失败；
             // 本机存下来的偏好只降级处理——那可能是从 Windows 带过来的偏好文件，
             // 为它把连接挡死会让这台机器再也连不上。
-            #[cfg(not(windows))]
             ensure!(
                 !options.force_virtual,
                 "Linux 被控端还不支持「只用虚拟屏启动」：物理显示器没法下线，请改用普通连接"
@@ -214,7 +193,7 @@ impl State {
             // 或者辅助程序没启用就建不出来；和 `restore_virtual` 一样记一条警告、
             // 退回物理屏接着连，而不是让这台机器从此连不上。Windows 的虚拟屏驱动是
             // 装好的，建不出来说明环境坏了，照旧报错。
-            #[cfg(not(windows))]
+
             let result = match result {
                 Err(error) => {
                     tracing::warn!(
@@ -225,8 +204,7 @@ impl State {
                 }
                 created => Some(created),
             };
-            #[cfg(windows)]
-            let result = Some(result);
+
             if let Some(result) = result {
                 if result.is_ok() && options.force_virtual && !self.has_saved_preferences {
                     self.preferences.default_virtual = true;

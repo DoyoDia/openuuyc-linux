@@ -36,7 +36,7 @@ impl DeviceCenterApp {
                         RichText::new(format!(
                             "v{}  ·  {} {}",
                             env!("CARGO_PKG_VERSION"),
-                            "Windows",
+                            "Linux",
                             std::env::consts::ARCH
                         ))
                         .size(crate::ui::theme::SMALL)
@@ -108,17 +108,11 @@ impl DeviceCenterApp {
             LegalDocument::ThirdParty => (
                 "Third-Party Notices and Licenses",
                 concat!(
-                    include_str!("../../../../THIRD_PARTY_NOTICES"),
+                    include_str!("../../../../NOTICES.md"),
                     "\n\nAppendix: SpeexDSP BSD license (Rust resampler adaptation)\n\n",
                     include_str!("../../../media/audio/COPYING.SpeexDSP"),
                     "\n\nAppendix: GNU LGPL 2.1 (covered components are licensed LGPL-2.1-or-later)\n\n",
                     include_str!("../../../media/decoder/COPYING.FFmpeg"),
-                    "\n\nAppendix: OpenUUYC Display attribution and Microsoft Public License\n\n",
-                    include_str!("../../../../drivers/display/UPSTREAM.md"),
-                    "\n\n",
-                    include_str!("../../../../drivers/display/LICENSE"),
-                    "\n\nAppendix: OpenUUYC Audio attribution\n\n",
-                    include_str!("../../../../drivers/audio/UPSTREAM.md"),
                     "\n\nAppendix: OxideAV MIT license (retained AVC/HEVC syntax primitives)\n\n",
                     include_str!("../../../../crates/codec/kernels/h264/COPYING.OxideAV"),
                     "\n\nAppendix: AV1 syntax (ChromiumOS adaptation, BSD-3-Clause)\n\n",
@@ -135,8 +129,8 @@ impl DeviceCenterApp {
                     include_str!("../../../../crates/codec/kernels/av1/licenses/COPYING.rav1e"),
                     "\n\n",
                     include_str!("../../../../crates/codec/kernels/av1/licenses/PATENTS.rav1e"),
-                    "\n\n--- Bundled fonts ---\n\n",
-                    include_str!("../../../../assets/fonts/LICENSE")
+                    "\n\n--- Bundled font and archive-library licenses ---\n\n",
+                    include_str!("../../../../LICENSE")
                 ),
             ),
         };

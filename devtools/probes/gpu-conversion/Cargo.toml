@@ -5,14 +5,14 @@ edition = "2024"
 publish = false
 
 [dependencies]
-anyhow = "1"
+anyhow = "1.0.104"
 cros-libva = { path = "../../../vendor/cros-libva" }
-glow = "0.17"
-libloading = "0.8"
+glow = "0.18.0"
+libloading = "0.9.0"
 openuuyc-h264 = { path = "../../../crates/codec/kernels/h264" }
-thiserror = "2"
-tracing = "0.1"
-yuv = "0.8.17"
+thiserror = "2.0.21"
+tracing = "0.1.44"
+yuv = "0.8.19"
 
 [profile.release]
 opt-level = 3

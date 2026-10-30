@@ -1,31 +1,16 @@
 //! Native OS/driver implementations. Product policy belongs to sessions/features.
 //! Select the real backend here; no placeholder implementations for future OSes.
-#[cfg(windows)]
-pub(crate) mod windows;
-#[cfg(windows)]
-pub(crate) use windows::{
-    audio_thread, capture, cursor_shape, decoder, device_profile, display, display_hdr, drag_drop,
-    encoder, file_locations, graphics, host_service, input::deadline, loopback, notifications,
-    power_request, surface, swapchain, system_power, terminal, transfer, video_shader,
-    virtual_audio, wol,
-};
-#[cfg(target_os = "linux")]
+
 pub(crate) mod linux;
-#[cfg(target_os = "linux")]
+
 pub(crate) use linux::{
     audio_thread, capture, cursor_shape, deadline, decoder, device_profile, display, display_hdr,
     drag_drop, encoder, file_locations, graphics, host_service, loopback, notifications,
-    power_request, surface, system_power, terminal, transfer, virtual_audio, virtual_display, wol,
+    power_request, system_power, terminal, transfer, virtual_audio, virtual_display, wol,
 };
-// The pty half of the terminal is identical on both, so it lives in one place
-// and each platform re-exports it. The rest of the macOS platform does not
-// exist yet, which is why only `terminal` is selected here.
-#[cfg(target_os = "macos")]
-pub(crate) mod macos;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+// Linux PTY implementation, shared with the standalone terminal tests.
 pub(crate) mod posix;
-#[cfg(target_os = "macos")]
-pub(crate) use macos::terminal;
+
 /// 终端前台正在跑的命令。
 ///
 /// 取的是前台进程组，不是 shell：用户在 shell 里敲的 `cargo build` 会让它
@@ -63,7 +48,7 @@ pub(crate) struct CompositorOutput {
 /// Only the Wayland layout reader builds one; Windows has no compositor
 /// layout, so there the variants are never constructed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(windows, allow(dead_code))]
+
 pub(crate) enum Rotation {
     #[default]
     Normal,

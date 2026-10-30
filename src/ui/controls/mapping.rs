@@ -106,7 +106,7 @@ pub(crate) fn mapping_row(ui: &mut Ui, row: MappingRow<'_>, last: bool) -> Mappi
         ui.painter()
             .line_segment([center + vec2(-5.0, 9.0), center + vec2(5.0, 9.0)], stroke);
     }
-    ui.interact(cells[0], ui.id().with("service-type"), Sense::hover())
+    ui.interact(cells[0], ui.scope_id().with("service-type"), Sense::hover())
         .on_hover_text(if row.url.is_some() {
             "HTTP 服务"
         } else if row.reachable == Some(true) {

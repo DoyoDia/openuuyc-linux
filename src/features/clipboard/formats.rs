@@ -1,38 +1,22 @@
 use super::*;
 use std::io::Cursor;
-#[cfg(windows)]
-use windows::{
-    Win32::System::DataExchange::{GetClipboardFormatNameW, RegisterClipboardFormatW},
-    core::PCWSTR,
-};
+
 #[derive(Clone)]
 pub(super) struct Format {
     pub wire: ClipboardFormat,
     pub local: u32,
 }
-#[cfg(windows)]
-pub(super) fn register(name: &str) -> u32 {
-    let s: Vec<u16> = name.encode_utf16().chain([0]).collect();
-    unsafe { RegisterClipboardFormatW(PCWSTR(s.as_ptr())) }
-}
-#[cfg(windows)]
-pub(super) fn name(id: u32) -> String {
-    let mut s = [0u16; 1024];
-    let n = unsafe { GetClipboardFormatNameW(id, &mut s) };
-    String::from_utf16_lossy(&s[..n.max(0) as usize])
-}
 
 /// The wire protocol speaks Windows clipboard-format ids, so a process-local
 /// registry stands in for the system one: the same name always maps to the same
 /// id within this client, starting at CF_PRIVATEFIRST like Windows does.
-#[cfg(not(windows))]
+
 fn registry() -> &'static Mutex<(HashMap<String, u32>, HashMap<u32, String>)> {
     static REGISTRY: std::sync::OnceLock<Mutex<(HashMap<String, u32>, HashMap<u32, String>)>> =
         std::sync::OnceLock::new();
     REGISTRY.get_or_init(Mutex::default)
 }
 
-#[cfg(not(windows))]
 pub(super) fn register(name: &str) -> u32 {
     if name.is_empty() {
         return 0;
@@ -50,7 +34,6 @@ pub(super) fn register(name: &str) -> u32 {
     id
 }
 
-#[cfg(not(windows))]
 pub(super) fn name(id: u32) -> String {
     if let Some(name) = standard_name(id) {
         return name.to_owned();
@@ -59,7 +42,7 @@ pub(super) fn name(id: u32) -> String {
 }
 
 /// The predefined CF_* formats this client can name without the system.
-#[cfg(not(windows))]
+
 const fn standard_name(id: u32) -> Option<&'static str> {
     Some(match id {
         1 => "CF_TEXT",

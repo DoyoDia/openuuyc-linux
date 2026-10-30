@@ -1,6 +1,6 @@
 # 插件 SDK
 
-SDK 定义清单格式、节点类型、C ABI 和数据结构。完整声明见 [src/lib.rs](src/lib.rs)，可构建实现见[画面滤镜示例](../effects/)。当前执行与图形后端为 Windows/D3D11。
+SDK 保留清单、节点类型及旧版 C ABI 的数据定义，完整声明见 [src/lib.rs](src/lib.rs)。Linux 播放器尚无插件执行后端，Windows/D3D11 示例已移除；以下字段用于兼容已有清单和节点图。
 
 ## 1. 插件与节点
 
@@ -138,4 +138,4 @@ openuuyc_plugin_api::embed_manifest!(include_bytes!("../manifest.json"));
 
 宿主会校验清单、端口、图结构、资源大小、数据身份和执行时限。插件进程隔离用于故障处理，不是安全沙箱；原生 DLL 仍具有运行账号的系统权限。
 
-Windows 是当前已实现的执行/绘制平台。SDK 的其他平台元数据布局不代表已有对应运行后端。源码与示例遵循项目根目录的[许可](../../LICENSE)。
+本分支不提供 Windows 执行后端，SDK 数据布局也不代表已有 Linux GPU 插件运行后端。源码遵循项目根目录的[许可](../../LICENSE)。

@@ -25,7 +25,7 @@ pub(super) fn path(device: &str, url: &str) -> Option<PathBuf> {
     hash.update(url.as_bytes());
     Some(
         root.join("OpenUUYC/cache/wallpapers/v1")
-            .join(format!("{:x}.png", hash.finalize())),
+            .join(format!("{}.png", hex::encode(hash.finalize()))),
     )
 }
 

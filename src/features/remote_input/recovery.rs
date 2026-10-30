@@ -63,12 +63,9 @@ impl RemoteInput {
     // Producers retire uncertain input immediately. The sole transport sender
     // takes the release pass before dequeuing any new input, even with no keys
     // held and an otherwise empty queue.
-    #[cfg_attr(
-        not(windows),
-        allow(
-            dead_code,
-            reason = "Only the Windows viewer reads raw input and checks key ordering; winit has neither failure."
-        )
+    #[allow(
+        dead_code,
+        reason = "Only the Windows viewer reads raw input and checks key ordering; winit has neither failure."
     )]
     pub(crate) fn pause_for_recovery(&self, reason: &str) {
         let mut s = self.lock();

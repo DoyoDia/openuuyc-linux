@@ -26,7 +26,6 @@ pub(crate) mod nvenc;
 pub(crate) mod power_request;
 mod software_encoder;
 pub(crate) mod startup_notify;
-pub(crate) mod surface;
 pub(crate) mod system_power;
 pub(crate) mod terminal;
 pub(crate) mod transfer;

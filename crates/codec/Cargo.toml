@@ -7,9 +7,9 @@ license-file = "../../LICENSE"
 description = "OpenUUYC low-delay video codecs and shared bitstream syntax"
 
 [dependencies]
-anyhow = "1.0"
-bytes = "1.11.1"
-yuv = "0.8.17"
+anyhow = "1.0.104"
+bytes = "1.12.1"
+yuv = "0.8.19"
 openuuyc-h264 = { path = "kernels/h264" }
 openuuyc-av1 = { path = "kernels/av1" }
 openuuyc-h265-syntax = { path = "kernels/hevc" }

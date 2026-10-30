@@ -15,9 +15,6 @@ use std::{
 
 pub(crate) use nv::{NV_ENC_BUFFER_FORMAT, NV_ENC_DEVICE_TYPE, NV_ENC_INPUT_RESOURCE_TYPE};
 
-#[cfg(windows)]
-type Library = libloading::os::windows::Library;
-#[cfg(not(windows))]
 type Library = libloading::Library;
 
 pub(crate) struct Api {
@@ -36,11 +33,7 @@ impl Api {
         unsafe {
             // Driver installation is the only library source; never search the
             // working directory.
-            #[cfg(windows)]
-            let library =
-                libloading::os::windows::Library::load_with_flags("nvEncodeAPI64.dll", 0x00000800)
-                    .context("未找到 NVIDIA NVENC 驱动")?;
-            #[cfg(not(windows))]
+
             let library = libloading::Library::new("libnvidia-encode.so.1")
                 .context("未找到 NVIDIA NVENC 驱动")?;
             let maximum = *library.get::<unsafe extern "C" fn(*mut u32) -> nv::NVENCSTATUS>(
@@ -476,10 +469,7 @@ impl Session {
 
     /// Narrow the size capability to what the platform's input surface can
     /// hold, rejecting a session already larger than that.
-    #[cfg_attr(
-        not(windows),
-        allow(dead_code, reason = "Only the Windows planar 4:4:4 input is limited.")
-    )]
+    #[allow(dead_code, reason = "Only the Windows planar 4:4:4 input is limited.")]
     pub fn restrict_maximum(&mut self, limit: (u32, u32)) -> Result<()> {
         self.maximum = (self.maximum.0.min(limit.0), self.maximum.1.min(limit.1));
         ensure!(

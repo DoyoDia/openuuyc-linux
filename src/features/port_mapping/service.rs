@@ -453,7 +453,7 @@ pub(crate) fn new_id() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
-    NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |old| {
+    NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |old| {
         Some(old.saturating_add(1).max(now))
     })
     .unwrap()

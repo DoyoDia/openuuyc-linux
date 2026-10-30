@@ -135,7 +135,7 @@ fn sized_switch(ui: &mut egui::Ui, value: &mut bool, size: egui::Vec2) -> egui::
         response.mark_changed();
     }
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *value, "")
+        egui::WidgetInfo::selected(egui::Role::CheckBox, ui.is_enabled(), *value, "")
     });
     paint_switch(ui, rect, *value);
     response
@@ -239,10 +239,10 @@ pub(crate) fn shortcut_row(
         vec2(COMPACT_HEIGHT, COMPACT_HEIGHT),
     );
     let response = ui
-        .interact(keys, ui.id().with((id, "binding")), Sense::click())
+        .interact(keys, ui.scope_id().with((id, "binding")), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("修改{label}快捷键"))
+        egui::WidgetInfo::labeled(egui::Role::Button, true, format!("修改{label}快捷键"))
     });
     if recording || response.hovered() {
         painter.rect_filled(
@@ -587,7 +587,7 @@ pub fn device_menu_header(ui: &mut egui::Ui, busy: bool) -> bool {
     }
     let response = ui.interact(
         button,
-        ui.id().with("refresh-devices"),
+        ui.scope_id().with("refresh-devices"),
         egui::Sense::click(),
     );
     if response.hovered() {
@@ -693,7 +693,7 @@ pub fn device_menu_row(
             status_color,
         );
     }
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     response
 }
 
@@ -809,7 +809,7 @@ pub(crate) fn visibility_button(ui: &mut egui::Ui, visible: &mut bool) -> egui::
     let (_, response) = icon_button_area(ui, HEIGHT);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
-            egui::WidgetType::Button,
+            egui::Role::Button,
             ui.is_enabled(),
             if *visible {
                 "隐藏验证码"
@@ -861,7 +861,7 @@ pub fn back_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
         egui::Button::new("").frame(false),
     );
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
+        egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label)
     });
     let center = response.rect.left_center() + vec2(18.0, 0.0);
     let color = ui.style().interact(&response).fg_stroke.color;
@@ -898,7 +898,7 @@ pub fn paint_close(painter: &egui::Painter, rect: egui::Rect, color: Color32) {
 pub(crate) fn edit_button(ui: &mut egui::Ui, hint: &str, size: f32) -> egui::Response {
     let (rect, response) = icon_button_area(ui, size);
     response
-        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), hint));
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), hint));
     let center = rect.center();
     let color = if response.hovered() { TEXT } else { MUTED };
     let stroke = Stroke::new(theme::ICON_STROKE, color);
@@ -985,7 +985,7 @@ pub fn close_button(ui: &mut egui::Ui, hint: &str, size: f32) -> egui::Response 
 pub(crate) fn audio_output_button(ui: &mut egui::Ui, hint: &str, size: f32) -> egui::Response {
     let (rect, response) = icon_button_area(ui, size);
     response
-        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), hint));
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), hint));
     let color = if !ui.is_enabled() {
         theme::DISABLED
     } else if response.hovered() {
@@ -1115,14 +1115,14 @@ pub fn screen_tab(
             .request_repaint_after(std::time::Duration::from_millis(33));
     }
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), selected, label)
+        egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, label)
     });
     let mut response = response.union(layout);
     let mut closed = false;
     if let Some(close) = close {
         closed = close.clicked();
         close.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "关闭虚拟屏")
+            egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), "关闭虚拟屏")
         });
         response = response.union(close.on_hover_text("关闭虚拟屏"));
     }
@@ -1149,7 +1149,7 @@ pub fn screen_add(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
         ui.painter()
             .line_segment([center - vec2(0.0, 4.5), center + vec2(0.0, 4.5)], stroke);
         response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, "添加虚拟屏")
+            egui::WidgetInfo::labeled(egui::Role::Button, enabled, "添加虚拟屏")
         });
         response
     })
@@ -1333,7 +1333,7 @@ pub fn setting_row(
         );
         response.widget_info(|| {
             egui::WidgetInfo::labeled(
-                egui::WidgetType::Button,
+                egui::Role::Button,
                 actions.is_enabled(),
                 format!("应用{label}"),
             )

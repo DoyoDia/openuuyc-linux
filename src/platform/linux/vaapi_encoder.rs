@@ -24,7 +24,7 @@ use cros_libva::{
     MappedCodedBuffer, Picture, PictureH264, RcFlags, Surface, UsageHint, VAConfigAttrib,
     VAConfigAttribType, VAEntrypoint, VAProfile, PictureHEVC, EncSequenceParameterBufferHEVC,
     EncPictureParameterBufferHEVC, EncSliceParameterBufferHEVC, HEVCEncSeqFields,
-    HEVCEncPicFields, HevcEncPicSccFields, HevcEncVuiFields, HevcEncSliceFields,
+    HEVCEncPicFields, HevcEncPicSccFields, HevcEncSeqSccFields, HevcEncVuiFields, HevcEncSliceFields,
 };
 
 use crate::media::encoding::{Encoded, Format, Rate};

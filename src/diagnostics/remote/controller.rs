@@ -262,7 +262,7 @@ async fn download(
         _ => anyhow::bail!("诊断传输未完整结束"),
     }
     ensure!(
-        format!("{:x}", hash.finalize()) == expected,
+        hex::encode(hash.finalize()) == expected,
         "诊断包校验失败"
     );
     owner.update(generation, |v| {

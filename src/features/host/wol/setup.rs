@@ -171,12 +171,7 @@ async fn perform(
                     .find(|r| r.default_metric.is_some())
                     .map(|r| r.index)
             });
-            #[cfg(windows)]
-            {
-                use crate::platform::windows::components;
-                status.unattended =
-                    components::status(components::Kind::HostService).is_ok_and(|s| s.ready);
-            }
+
             status.checked = true;
             status.enabled = None;
             status.enabled = Some(cloud?);

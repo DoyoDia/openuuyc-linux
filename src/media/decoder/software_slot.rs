@@ -4,15 +4,6 @@ use anyhow::Result;
 use std::marker::PhantomData;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(windows)]
-use {
-    anyhow::{Context, bail},
-    windows::Win32::Foundation::{
-        CloseHandle, HANDLE, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
-    },
-    windows::Win32::System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject},
-    windows::core::w,
-};
 
 static OCCUPIED: AtomicBool = AtomicBool::new(false);
 
@@ -26,9 +17,6 @@ impl std::fmt::Display for SoftwarePlaybackBusy {
 impl std::error::Error for SoftwarePlaybackBusy {}
 
 pub(crate) struct SoftwareSlot {
-    #[cfg(windows)]
-    handle: HANDLE,
-    #[cfg(not(windows))]
     lock: std::fs::File,
     _thread_bound: PhantomData<Rc<()>>,
 }
@@ -48,28 +36,10 @@ impl SoftwareSlot {
         }
         result
     }
-    #[cfg(windows)]
-    fn acquire_global() -> Result<Rc<Self>> {
-        let handle =
-            unsafe { CreateMutexW(None, false, w!("Local\\OpenUUYC.SoftwareVideoPlayback.v1")) }
-                .context("创建全客户端软解窗口限制失败")?;
-        let status = unsafe { WaitForSingleObject(handle, 0) };
-        if status == WAIT_OBJECT_0 || status == WAIT_ABANDONED {
-            return Ok(Rc::new(Self {
-                handle,
-                _thread_bound: PhantomData,
-            }));
-        }
-        let _ = unsafe { CloseHandle(handle) };
-        if status == WAIT_TIMEOUT {
-            return Err(SoftwarePlaybackBusy.into());
-        }
-        bail!("获取软解窗口名额失败：{status:?}")
-    }
 
     /// flock releases automatically when the owning process exits, matching the
     /// abandoned-mutex recovery the Windows slot relies on.
-    #[cfg(not(windows))]
+
     fn acquire_global() -> Result<Rc<Self>> {
         use anyhow::Context;
         let base = std::env::var_os("XDG_RUNTIME_DIR")
@@ -102,12 +72,7 @@ impl Drop for SoftwareSlot {
     fn drop(&mut self) {
         // Rc/PhantomData keep final release on the acquiring worker. Win32
         // abandoned-mutex handling permits recovery if the owner process dies.
-        #[cfg(windows)]
-        {
-            let _ = unsafe { ReleaseMutex(self.handle) };
-            let _ = unsafe { CloseHandle(self.handle) };
-        }
-        #[cfg(not(windows))]
+
         {
             let _ = self.lock.unlock();
         }
