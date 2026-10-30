@@ -761,7 +761,7 @@ impl Handle {
         Ok(())
     }
     /// Whether a controller may also see and attach to the shells the local
-    /// user opened on this machine (the sessions page, `OpenUUYC terminal`).
+    /// user opened on this machine (the sessions page, `openuuyc terminal`).
     ///
     /// A second switch under the terminal, off by default: the terminal
     /// grant lets the controller run commands, this one lets it watch and

@@ -1,8 +1,3 @@
-#![allow(
-    non_snake_case,
-    reason = "The executable uses the OpenUUYC product name."
-)]
-
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -17,7 +12,7 @@ use openuuyc::session::controller;
 
 #[derive(Parser)]
 #[command(
-    name = "OpenUUYC",
+    name = "openuuyc",
     version,
     about = "OpenUUYC — 第三方 UU 远程协议兼容客户端"
 )]
@@ -246,7 +241,7 @@ fn main() -> Result<()> {
 }
 
 /// 协议注册把链接当作第一个参数交给程序，所以根上有一个位置参数。子命令名
-/// 要优先当子命令，否则 `OpenUUYC gui` 会被读成一条链接。
+/// 要优先当子命令，否则 `openuuyc gui` 会被读成一条链接。
 fn parse_cli() -> std::result::Result<Cli, clap::Error> {
     use clap::{CommandFactory, FromArgMatches};
     let args: Vec<_> = std::env::args_os().collect();

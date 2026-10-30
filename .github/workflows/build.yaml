@@ -1,0 +1,196 @@
+name: Release for Linux
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  getversion:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+        with:
+          fetch-depth: 0
+
+      - name: Determine release tag
+        id: version
+        shell: bash
+        run: |
+          version=$(sed -n '/^\[package\]/,/^\[/ { s/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p; }' Cargo.toml)
+          test -n "$version" || exit 1
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+
+  arch:
+    needs: getversion
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install dependencies
+        shell: bash
+        run: |
+          pacman -S --noconfirm --needed \
+            archlinux-keyring base-devel git pkg-config cmake clang nasm rust \
+            libva libx11 libxcb libxrandr libxi libxcursor libxfixes \
+            libxkbcommon libxkbcommon-x11 wayland libglvnd vulkan-icd-loader \
+            dbus alsa-lib openssl fuse3
+
+      - name: Checkout
+        uses: actions/checkout@main
+        with:
+          fetch-depth: 0
+
+      - name: Build
+        shell: bash
+        run: |
+          cargo build --release --locked --bin openuuyc
+          cd crates/vkms && CARGO_TARGET_DIR=../../target cargo build --release --locked
+          target/release/openuuyc --version
+
+      - name: Assemble the release archive
+        shell: bash
+        run: |
+          set -eu
+          version="${RELEASE_TAG#v}"
+          stage="openuuyc-${version}-x86_64-linux"
+          mkdir -p "$stage"
+          # Keep the package/ layout in the release archive.
+          install -Dm755 target/release/openuuyc "$stage/openuuyc"
+          install -Dm755 target/release/openuuyc-vkms "$stage/openuuyc-vkms"
+          install -Dm755 package/omarchy/install-omarchy.sh "$stage/package/omarchy/install-omarchy.sh"
+          for file in package/linux/openuuyc.desktop \
+            package/linux/60-openuuyc-uinput.rules \
+            package/linux/app-openuuyc.service \
+            package/linux/openuuyc.service \
+            package/linux/openuuyc-vkms.socket \
+            package/linux/openuuyc-vkms.service \
+            package/omarchy/omarchy-menu.jsonc assets/icon-256.png \
+            LICENSE NOTICES.md; do
+            install -Dm644 "$file" "$stage/$file"
+          done
+          tar --zstd -cf "$stage.tar.zst" "$stage"
+          install -Dm755 target/release/openuuyc openuuyc
+          ls -lh "$stage.tar.zst" openuuyc
+
+      - name: Build the pacman package from the local archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          stage="openuuyc-${version}-x86_64-linux"
+          mkdir -p /tmp/pacman-package
+          cp package/arch/{PKGBUILD,openuuyc.install} /tmp/pacman-package/
+          # Reuse the package layout, but package this run's prebuilt archive.
+          sed -i 's|target/release/||g; s|cd "$pkgname"|cd "$_dir"|g' /tmp/pacman-package/PKGBUILD
+          cp "$stage.tar.zst" /tmp/pacman-package/
+          # Override the release download: package the binaries built by this run.
+          pkgver="${version//-/_}"
+          pkgrel=1
+          sed -i \
+            -e "s|@PKGVER@|$pkgver|g" \
+            -e "s|@PKGREL@|$pkgrel|g" \
+            /tmp/pacman-package/PKGBUILD
+          printf '\n_dir=%q\nsource=(%q)\nsha256sums=(SKIP)\nprepare() { :; }\nbuild() { :; }\n' \
+            "$stage" "$stage.tar.zst" \
+            >> /tmp/pacman-package/PKGBUILD
+          useradd --create-home builder
+          chown -R builder:builder /tmp/pacman-package
+          runuser -u builder -- bash -c 'cd /tmp/pacman-package && makepkg --nodeps --noconfirm'
+          mkdir -p dist
+          cp /tmp/pacman-package/*.pkg.tar.zst dist/
+          pacman -Qip dist/*.pkg.tar.zst
+
+      - name: Upload the pacman package
+        uses: actions/upload-artifact@main
+        with:
+          name: release_pacman
+          path: dist/*
+
+  deb:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@main
+        with:
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake clang nasm pkg-config dpkg-dev libva-dev \
+            libasound2-dev libdbus-1-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libx11-dev libxcb1-dev libxrandr-dev libxi-dev \
+            libxcursor-dev libgl1-mesa-dev libvulkan-dev libudev-dev libssl-dev
+
+      - name: Get Rust Toolchain
+        uses: dtolnay/rust-toolchain@master
+
+      - name: Install cargo-deb
+        uses: taiki-e/install-action@main
+        with:
+          tool: cargo-deb
+
+      - name: Build
+        shell: bash
+        run: |
+          cargo build --release --locked --bin openuuyc
+          cd crates/vkms && CARGO_TARGET_DIR=../../target cargo build --release --locked
+          target/release/openuuyc --version
+
+      - name: Check the developer probes still build
+        shell: bash
+        run: |
+          cargo check --locked --bins \
+            --manifest-path devtools/probes/gpu-conversion/Cargo.toml \
+            --target-dir target/probes
+          gcc -fsyntax-only -Wall devtools/probes/vaapi_export_probe.c
+          gcc -fsyntax-only -Wall devtools/probes/vulkan_dmabuf_probe.c
+
+      - name: Package to deb
+        shell: bash
+        run: cargo deb --no-build
+
+      - name: Check the package installs
+        shell: bash
+        run: |
+          sudo apt-get install -y ./target/debian/*.deb
+          openuuyc --version
+          dpkg-deb --info target/debian/*.deb
+
+      - name: Upload the deb package
+        uses: actions/upload-artifact@main
+        with:
+          name: release_dpkg
+          path: target/debian/*.deb
+
+  release:
+    needs: [getversion, arch, deb]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@main
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+
+      - name: Release
+        uses: softprops/action-gh-release@master
+        with:
+          tag_name: ${{ needs.getversion.outputs.tag }}
+          files: |
+            dist/*.pkg.tar.zst
+            dist/*.deb
+            dist/*.tar.zst
+            dist/openuuyc
+            dist/openuuyc-vkms
+          body: |
+            ## Release ${{ needs.getversion.outputs.tag }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

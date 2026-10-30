@@ -12,7 +12,7 @@
     "icon": "",
     "label": "UU Remote (OpenUUYC)",
     "description": "Third-party UU Remote client with Wayland host support",
-    "disabled": "omarchy-pkg-present openuuyc-bin",
-    "action": "omarchy-launch-floating-terminal-with-presentation omarchy-pkg-aur-add openuuyc-bin",
+    "disabled": "omarchy-pkg-present openuuyc",
+    "action": "omarchy-launch-floating-terminal-with-presentation omarchy-pkg-aur-add openuuyc",
   },
 }

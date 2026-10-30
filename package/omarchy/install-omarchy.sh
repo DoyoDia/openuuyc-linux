@@ -3,20 +3,20 @@
 #
 # This is the manual path for people who build from source or unpack the
 # release archive (it has the same layout as this repository). AUR users do
-# not need it: `yay -S openuuyc-bin` already installs every file below.
+# not need it: `pacman -S openuuyc` already installs every file below.
 #
 # Usage:
-#   ./install-omarchy.sh              # install the binary in this tree
-#   ./install-omarchy.sh --uninstall  # remove it (keeps user data)
+#   ./package/omarchy/install-omarchy.sh              # install the binary in this tree
+#   ./package/omarchy/install-omarchy.sh --uninstall  # remove it (keeps user data)
 set -euo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/../.."
 
 if [[ -n ${OPENUUYC_BINARY:-} ]]; then
     BINARY=$OPENUUYC_BINARY
-elif [[ -x target/release/OpenUUYC ]]; then
-    BINARY=target/release/OpenUUYC
+elif [[ -x target/release/openuuyc ]]; then
+    BINARY=target/release/openuuyc
 else
-    BINARY=OpenUUYC # the release archive
+    BINARY=openuuyc # the release archive
 fi
 # 虚拟显示器辅助程序（可选）。发布归档里有，自己构建时要用 crates/vkms 单独编一次。
 if [[ -x target/release/openuuyc-vkms ]]; then
@@ -54,7 +54,7 @@ uninstall() {
     systemctl --user disable app-openuuyc.service openuuyc.service 2>/dev/null || true
     "${SUDO[@]}" systemctl disable --now openuuyc-vkms.socket 2>/dev/null || true
     "${SUDO[@]}" rm -f \
-        "$PREFIX/bin/OpenUUYC" \
+        "$PREFIX/bin/openuuyc" \
         "$PREFIX/lib/systemd/user/app-openuuyc.service" \
         "$PREFIX/lib/systemd/user/openuuyc.service" \
         "$PREFIX/share/applications/openuuyc.desktop" \
@@ -72,7 +72,7 @@ uninstall() {
     systemctl --user daemon-reload 2>/dev/null || true
     # Only remove the menu extension if it is exactly the one we wrote; an
     # extension the user merged our entry into stays.
-    if [[ -e $MENU ]] && cmp -s packaging/omarchy/omarchy-menu.jsonc "$MENU"; then
+    if [[ -e $MENU ]] && cmp -s package/omarchy/omarchy-menu.jsonc "$MENU"; then
         rm -f "$MENU"
     elif [[ -e $MENU ]] && grep -q 'install.service.openuuyc' "$MENU"; then
         warn "$MENU 含有 OpenUUYC 菜单项，请手动删除该条目"
@@ -89,15 +89,15 @@ if [[ ! -x $BINARY ]]; then
 找不到可执行文件：$BINARY
 
 先构建：
-    cargo build --release --bin OpenUUYC
+    cargo build --release --bin openuuyc
 
-或从 Release 下载 OpenUUYC-<版本>-x86_64-linux.tar.zst，解压后运行其中的
-    ./install-omarchy.sh
+或从 Release 下载 openuuyc-<版本>-x86_64-linux.tar.zst，解压后运行其中的
+    ./package/omarchy/install-omarchy.sh
 EOF
     exit 1
 fi
 
-# 自启单元里要写 $PREFIX/bin/OpenUUYC。systemd 只认绝对路径，路径里的引号、反斜杠
+# 自启单元里要写 $PREFIX/bin/openuuyc。systemd 只认绝对路径，路径里的引号、反斜杠
 # 与换行在单元里表达不了（Executable path contains special characters），所以在动
 # 系统之前就拒绝。空格与 % 没问题：前者靠引号，后者写成 %%。
 case $PREFIX in
@@ -127,7 +127,7 @@ if ! pacman -Qq xdg-desktop-portal-hyprland &>/dev/null; then
 fi
 
 say "安装 uinput 输入权限（被控键鼠必需）"
-"${SUDO[@]}" install -Dm644 packaging/linux/60-openuuyc-uinput.rules \
+"${SUDO[@]}" install -Dm644 package/linux/60-openuuyc-uinput.rules \
     /usr/lib/udev/rules.d/60-openuuyc-uinput.rules
 "${SUDO[@]}" udevadm control --reload-rules
 "${SUDO[@]}" modprobe uinput
@@ -138,8 +138,8 @@ if [[ -e /dev/uinput ]]; then
 fi
 
 say "安装程序文件"
-"${SUDO[@]}" install -Dm755 "$BINARY" "$PREFIX/bin/OpenUUYC"
-"${SUDO[@]}" install -Dm644 packaging/linux/openuuyc.desktop \
+"${SUDO[@]}" install -Dm755 "$BINARY" "$PREFIX/bin/openuuyc"
+"${SUDO[@]}" install -Dm644 package/linux/openuuyc.desktop \
     "$PREFIX/share/applications/openuuyc.desktop"
 "${SUDO[@]}" install -Dm644 assets/icon-256.png \
     "$PREFIX/share/icons/hicolor/256x256/apps/openuuyc.png"
@@ -149,10 +149,10 @@ if command -v update-desktop-database >/dev/null; then
 fi
 
 say "安装登录自启单元"
-# 打包的那份单元把程序路径写死成 /usr/bin/OpenUUYC；这个脚本装到 $PREFIX，
+# 打包的那份单元把程序路径写死成 /usr/bin/openuuyc；这个脚本装到 $PREFIX，
 # 按实际位置改掉，否则单元启动的是另一个（或不存在）的程序。逐行替换而不用 sed，
 # 路径里的 # & 之类不会被当成 sed 的语法；% 是 systemd 的说明符，写成 %%。
-unit_image="$PREFIX/bin/OpenUUYC"
+unit_image="$PREFIX/bin/openuuyc"
 unit_image=${unit_image//\%/%%}
 unit=$(mktemp)
 trap 'rm -f "$unit"' EXIT
@@ -162,9 +162,9 @@ while IFS= read -r line; do
     ConditionFileIsExecutable=*) printf 'ConditionFileIsExecutable=%s\n' "$unit_image" ;;
     *) printf '%s\n' "$line" ;;
     esac
-done <packaging/linux/app-openuuyc.service >"$unit"
+done <package/linux/app-openuuyc.service >"$unit"
 "${SUDO[@]}" install -Dm644 "$unit" "$PREFIX/lib/systemd/user/app-openuuyc.service"
-"${SUDO[@]}" install -Dm644 packaging/linux/openuuyc.service \
+"${SUDO[@]}" install -Dm644 package/linux/openuuyc.service \
     "$PREFIX/lib/systemd/user/openuuyc.service"
 systemctl --user daemon-reload 2>/dev/null || true
 remove_legacy_service
@@ -175,9 +175,9 @@ if [[ -x $HELPER ]]; then
     # 见 crates/vkms/src/client.rs），所以和 udev 规则一样装到 /usr，不跟着
     # $PREFIX 走。服务是套接字激活的，默认不启用：装完不启用一切照旧。
     "${SUDO[@]}" install -Dm755 "$HELPER" /usr/bin/openuuyc-vkms
-    "${SUDO[@]}" install -Dm644 packaging/linux/openuuyc-vkms.socket \
+    "${SUDO[@]}" install -Dm644 package/linux/openuuyc-vkms.socket \
         /usr/lib/systemd/system/openuuyc-vkms.socket
-    "${SUDO[@]}" install -Dm644 packaging/linux/openuuyc-vkms.service \
+    "${SUDO[@]}" install -Dm644 package/linux/openuuyc-vkms.service \
         /usr/lib/systemd/system/openuuyc-vkms.service
     "${SUDO[@]}" systemctl daemon-reload 2>/dev/null || true
 else
@@ -189,11 +189,11 @@ fi
 if [[ -d $HOME/.config/omarchy ]]; then
     say "添加 Omarchy 菜单项"
     mkdir -p "$HOME/.config/omarchy/extensions"
-    if [[ -e $MENU ]] && ! cmp -s packaging/omarchy/omarchy-menu.jsonc "$MENU"; then
+    if [[ -e $MENU ]] && ! cmp -s package/omarchy/omarchy-menu.jsonc "$MENU"; then
         warn "$MENU 已存在，未自动修改"
-        warn "请手动加入 packaging/omarchy/omarchy-menu.jsonc 里的条目"
+        warn "请手动加入 package/omarchy/omarchy-menu.jsonc 里的条目"
     else
-        cp packaging/omarchy/omarchy-menu.jsonc "$MENU"
+        cp package/omarchy/omarchy-menu.jsonc "$MENU"
         say "菜单项已写入 $MENU（Quickshell 会自动重新加载）"
     fi
 fi
@@ -202,7 +202,7 @@ cat <<EOF
 
 完成。
 
-  启动      应用菜单「OpenUUYC」，或运行 OpenUUYC
+  启动      应用菜单「OpenUUYC」，或运行 openuuyc
   日志      ~/.local/share/OpenUUYC/logs/
   菜单      Super + Space → Install → Service → UU Remote (OpenUUYC)
 

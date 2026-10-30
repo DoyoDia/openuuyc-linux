@@ -467,7 +467,7 @@ pub(crate) mod startup {
         )
     }
 
-    /// 单元内容。包里的 `packaging/linux/app-openuuyc.service` 是同一份定义，改这里时
+    /// 单元内容。包里的 `package/linux/app-openuuyc.service` 是同一份定义，改这里时
     /// 要一起改。
     fn unit_body(image: &str) -> String {
         let specifier = image.replace('%', "%%");
@@ -526,11 +526,11 @@ pub(crate) mod startup {
 
         #[test]
         fn quotes_and_escapes_the_executable_path() {
-            assert_eq!(exec_quote("/usr/bin/OpenUUYC"), r#""/usr/bin/OpenUUYC""#);
+            assert_eq!(exec_quote("/usr/bin/openuuyc"), r#""/usr/bin/openuuyc""#);
             // 说明符要写成字面量；变量展开在可执行路径上不存在，`$` 不能双写
             assert_eq!(exec_quote("/opt/a%b/c$d"), r#""/opt/a%%b/c$d""#);
             // 引号与反斜杠在单元里表达不了，只能拒绝
-            assert!(check_image("/usr/bin/OpenUUYC").is_ok());
+            assert!(check_image("/usr/bin/openuuyc").is_ok());
             assert!(check_image(r#"/opt/a"b\c"#).is_err());
             assert!(check_image("/opt/a\nb").is_err());
         }
@@ -538,12 +538,12 @@ pub(crate) mod startup {
         /// 包里的单元与程序自己写的必须说同一件事：包装时用前者，便携运行时用后者。
         #[test]
         fn the_shipped_unit_agrees_with_the_generated_one() {
-            let shipped = include_str!("../../../packaging/linux/app-openuuyc.service");
-            let generated = unit_body("/usr/bin/OpenUUYC");
+            let shipped = include_str!("../../../package/linux/app-openuuyc.service");
+            let generated = unit_body("/usr/bin/openuuyc");
             for line in [
                 "PartOf=graphical-session.target",
                 "After=graphical-session.target",
-                "ConditionFileIsExecutable=/usr/bin/OpenUUYC",
+                "ConditionFileIsExecutable=/usr/bin/openuuyc",
                 "StartLimitIntervalSec=500",
                 "StartLimitBurst=5",
                 "Type=simple",
@@ -555,13 +555,13 @@ pub(crate) mod startup {
                 assert!(shipped.contains(line), "单元文件缺少 {line}");
                 assert!(generated.contains(line), "生成的单元缺少 {line}");
             }
-            assert!(shipped.contains("ExecStart=/usr/bin/OpenUUYC gui --background"));
+            assert!(shipped.contains("ExecStart=/usr/bin/openuuyc gui --background"));
         }
 
         #[test]
         fn portal_identity_uses_the_desktop_entry_id() {
-            let desktop = include_str!("../../../packaging/linux/openuuyc.desktop");
-            let compatibility = include_str!("../../../packaging/linux/openuuyc.service");
+            let desktop = include_str!("../../../package/linux/openuuyc.desktop");
+            let compatibility = include_str!("../../../package/linux/openuuyc.service");
             assert_eq!(UNIT, "app-openuuyc.service");
             assert!(desktop.contains("Name=OpenUUYC"));
             assert!(compatibility.contains(
@@ -574,8 +574,8 @@ pub(crate) mod startup {
 
         #[test]
         fn unit_follows_the_graphical_session() {
-            let body = unit_body("/usr/bin/OpenUUYC");
-            assert!(body.contains("ExecStart=\"/usr/bin/OpenUUYC\" gui --background"));
+            let body = unit_body("/usr/bin/openuuyc");
+            assert!(body.contains("ExecStart=\"/usr/bin/openuuyc\" gui --background"));
             assert!(body.contains("WantedBy=graphical-session.target"));
             assert!(body.contains("PartOf=graphical-session.target"));
             assert!(body.contains("Restart=on-failure"));
@@ -628,7 +628,7 @@ pub(crate) mod startup {
             std::fs::write(places.config.join(UNIT), "").unwrap();
             assert!(places.unit_name_installed(UNIT));
             assert!(!places.enabled(true).unwrap());
-            places.enable("/usr/bin/OpenUUYC", false).unwrap();
+            places.enable("/usr/bin/openuuyc", false).unwrap();
             assert!(places.enabled(false).unwrap());
             places.disable().unwrap();
             assert!(!places.entry().exists());
@@ -640,7 +640,7 @@ pub(crate) mod startup {
         fn a_skipped_entry_reads_as_off() {
             let places = scratch("skipped");
             for skip in ["Hidden=true", "X-GNOME-Autostart-enabled=false"] {
-                places.enable("/usr/bin/OpenUUYC", false).unwrap();
+                places.enable("/usr/bin/openuuyc", false).unwrap();
                 let text = std::fs::read_to_string(places.entry()).unwrap();
                 std::fs::write(
                     places.entry(),

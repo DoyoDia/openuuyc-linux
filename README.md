@@ -75,13 +75,16 @@ Linux 客户端仍保留与官方客户端及 Windows 远端互通所需的协�
 
 ### Arch / Omarchy
 
-[`packaging/aur/`](packaging/aur/README.md) 里有两份 AUR 配方：`openuuyc-bin` 安装 Release 里的压缩包，`openuuyc-git` 跟踪 `linux-port` 分支源码构建。它们还没有发布到 AUR，可以直接在本地构建：
+[`package/arch/PKGBUILD`](package/arch/PKGBUILD) 提供 `openuuyc` 的 Arch Linux 打包配方，可在本地构建：
 
 ```bash
-cd packaging/aur/openuuyc-bin && makepkg -si
+version=$(sed -n '/^\[package\]/,/^\[/ { s/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p; }' Cargo.toml)
+cd package/arch
+sed -e "s|@PKGVER@|${version//-/_}|g" -e 's|@PKGREL@|1|g' PKGBUILD > PKGBUILD.local
+makepkg -p PKGBUILD.local -si
 ```
 
-Omarchy 用户可以把 [`packaging/omarchy/omarchy-menu.jsonc`](packaging/omarchy/omarchy-menu.jsonc) 里的条目加进 `~/.config/omarchy/extensions/omarchy-menu.jsonc`，从 `Super + Space → Install → Service` 安装。不用 AUR 时，在源码目录构建后（或解压 Release 里的 `OpenUUYC-<版本>-x86_64-linux.tar.zst` 后）运行 `./install-omarchy.sh`，它会安装程序、桌面入口、uinput 规则和 Omarchy 菜单项（`--uninstall` 卸载）。
+Omarchy 用户可以把 [`package/omarchy/omarchy-menu.jsonc`](package/omarchy/omarchy-menu.jsonc) 里的条目加进 `~/.config/omarchy/extensions/omarchy-menu.jsonc`，从 `Super + Space → Install → Service` 安装。不用 AUR 时，在源码目录构建后（或解压 Release 里的 `openuuyc-<版本>-x86_64-linux.tar.zst` 后）运行 `./package/omarchy/install-omarchy.sh`，它会安装程序、桌面入口、uinput 规则和 Omarchy 菜单项（`--uninstall` 卸载）。
 
 自建：
 
@@ -90,7 +93,7 @@ sudo pacman -S --needed base-devel cmake clang nasm pkg-config rust \
     libva libx11 libxcb libxrandr libxi libxcursor libxfixes \
     libxkbcommon libxkbcommon-x11 wayland libglvnd vulkan-icd-loader \
     dbus alsa-lib openssl fuse3 noto-fonts-cjk
-cargo build --release --bin OpenUUYC
+cargo build --release --bin openuuyc
 ```
 
 ### Debian / Ubuntu
@@ -105,7 +108,7 @@ sudo apt install build-essential cmake clang nasm pkg-config libva-dev \
 git clone https://github.com/djkcyl/openuuyc.git
 cd openuuyc
 cargo build --release
-./target/release/OpenUUYC gui
+./target/release/openuuyc gui
 ```
 
 ### 被控端虚拟显示器（可选）
@@ -129,8 +132,8 @@ sudo systemctl enable --now openuuyc-vkms.socket
 ```bash
 (cd crates/vkms && CARGO_TARGET_DIR=../../target cargo build --release --locked)
 sudo install -Dm755 target/release/openuuyc-vkms /usr/bin/openuuyc-vkms
-sudo install -Dm644 packaging/linux/openuuyc-vkms.socket \
-    packaging/linux/openuuyc-vkms.service /usr/lib/systemd/system/
+sudo install -Dm644 package/linux/openuuyc-vkms.socket \
+    package/linux/openuuyc-vkms.service /usr/lib/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now openuuyc-vkms.socket
 ```
 
@@ -144,7 +147,7 @@ echo uinput | sudo tee /etc/modules-load.d/uinput.conf
 ```
 
 规则使用 `TAG+="uaccess"`，由 systemd-logind 给本机活动会话授权，**不需要把用户加进 `input` 组，也不需要重新登录**。从源码构建或手动安装时，把
-[`packaging/linux/60-openuuyc-uinput.rules`](packaging/linux/60-openuuyc-uinput.rules)
+[`package/linux/60-openuuyc-uinput.rules`](package/linux/60-openuuyc-uinput.rules)
 放到 `/etc/udev/rules.d/` 即可。没有权限时程序会记录一条警告并回退到 XTest（只影响 XWayland 客户端）。Xorg 会话不使用 uinput，无需这一步。
 
 Wayland 下被控先用合成器自己的 wlroots screencopy（Sway、Hyprland、niri 等都提供），不需要门户，也不弹授权。合成器不提供或无法复制画面时（GNOME、KDE 等）改用 XDG 屏幕共享门户：
@@ -166,10 +169,10 @@ sudo pacman -S --needed xdg-desktop-portal-gnome   # KDE 为 xdg-desktop-portal-
 ### 运行前提与开关
 
 - **运行环境**：登录态存在系统密钥环（Secret Service，需要 gnome-keyring、KWallet 等，没有明文回退）。托盘用 StatusNotifierItem，GNOME 需要 AppIndicator 扩展（Ubuntu 默认启用），桌面没有托盘时关闭窗口即退出；面板比程序晚起来时每 2 秒重试，托盘一出现就改回关闭收进托盘。粘贴远端文件要 `fuse3`。Wayland 会话被控也要有 XWayland（显示器列表与输入注入器都先连 X 服务器）；缩放（含分数缩放）的桌面上，门户共享的屏幕按合成器 `xdg-output` 布局里的输出名与所选显示器配对，需要 XWayland 23.1 及以上（输出以连接器命名）且程序能拿到 `WAYLAND_DISPLAY`，配不上时报错，不会采错屏。拖出文件的预览图要 `gio` 与 `rsvg-convert`。
-- **开机自启**：桌面接进 `graphical-session.target` 时是 systemd 用户单元 `app-openuuyc.service`（`journalctl --user -u app-openuuyc` 看日志）。单元名与 `openuuyc.desktop` 对应，门户才认得出这是 OpenUUYC，KDE 记下的屏幕共享授权才能沿用；旧版本启用的 `openuuyc.service` 在程序启动时迁移过去，迁移前的那次登录由它转发。否则写 `~/.config/autostart/openuuyc.desktop`。两者都不处理的合成器（无 uwsm 的 sway、Hyprland 等）请自行启动 `OpenUUYC gui --background`。再次启动程序会经 `$XDG_RUNTIME_DIR/openuuyc/control.sock` 唤起已运行的控制中心。
+- **开机自启**：桌面接进 `graphical-session.target` 时是 systemd 用户单元 `app-openuuyc.service`（`journalctl --user -u app-openuuyc` 看日志）。单元名与 `openuuyc.desktop` 对应，门户才认得出这是 OpenUUYC，KDE 记下的屏幕共享授权才能沿用；旧版本启用的 `openuuyc.service` 在程序启动时迁移过去，迁移前的那次登录由它转发。否则写 `~/.config/autostart/openuuyc.desktop`。两者都不处理的合成器（无 uwsm 的 sway、Hyprland 等）请自行启动 `openuuyc gui --background`。再次启动程序会经 `$XDG_RUNTIME_DIR/openuuyc/control.sock` 唤起已运行的控制中心。
 - **协助邀请链接**：安装包的 `openuuyc.desktop` 登记了 `x-scheme-handler/uuremote`，没有 Windows 那样的接管开关，可用 `xdg-mime default <程序>.desktop x-scheme-handler/uuremote` 改。便携运行时把链接作为唯一参数传给程序。
 - **被控终端**：默认关闭，在被控设置的访问权限里打开，打开时会确认一次；以 root 运行时不提供，本机也不能新建。shell 跑在 pty 上，断线后保留、重连可接回（重开同一会话即接管，旧连接不再收输出），接回时重画当前屏幕，不带回已滚出屏幕的输出；主控开的会话在退出或切换账号、关闭终端开关、禁止被控或在本机断开连接时结束，两端都没有附着 30 分钟后也会结束。设置页显示运行中的会话数，可一键结束全部。
-  - **终端会话页**：侧边栏常驻，列出全部会话，可结束；也能在本机新建会话，或用系统终端接上任一会话（`$TERMINAL` 优先，再找常见的终端模拟器）。命令行是 `OpenUUYC terminal [编号或名字]`、`--list`、`--new [名字]`，控制中心没在跑时新建和接入会以 `gui --background` 把它拉起来。本机经 `$XDG_RUNTIME_DIR/openuuyc/terminal.sock` 接入，只有同一用户能连。本机与主控同时附着时输入输出同步，终端按两边较小的尺寸显示；关掉本地终端只断开这一端。本机开的会话不会因空闲被结束，shell 退出后从列表消失。
+  - **终端会话页**：侧边栏常驻，列出全部会话，可结束；也能在本机新建会话，或用系统终端接上任一会话（`$TERMINAL` 优先，再找常见的终端模拟器）。命令行是 `openuuyc terminal [编号或名字]`、`--list`、`--new [名字]`，控制中心没在跑时新建和接入会以 `gui --background` 把它拉起来。本机经 `$XDG_RUNTIME_DIR/openuuyc/terminal.sock` 接入，只有同一用户能连。本机与主控同时附着时输入输出同步，终端按两边较小的尺寸显示；关掉本地终端只断开这一端。本机开的会话不会因空闲被结束，shell 退出后从列表消失。
   - **本机会话对主控的可见性**：本机开的会话默认不对主控可见，主控看不到、也接不上。要让主控接入，在「终端」下再打开「允许主控接入本机终端会话」，打开时会再确认一次，关闭终端开关时它一并关闭。主控接入本机会话时访问通知会写明；关掉这一项后主控立即断开这些会话，shell 留给本机。
 - **远程开机**：配置网卡需要 root，程序内不提供，请用 `sudo ethtool -s <网卡> wol g`。远程关机与重启经 systemd-logind，受 polkit 约束。
 - **更新**：「关于」页的更新提醒指向上游的 Windows Release；Linux 版请从本 fork 的 Release 或 deb / AUR 包更新。下面的「命令行更新」只适用于 Windows。
@@ -191,13 +194,13 @@ sudo pacman -S --needed base-devel rust cmake nasm clang pkgconf libva alsa-lib 
 
 ```bash
 cargo install cargo-deb
-cargo build --release --locked --bin OpenUUYC
+cargo build --release --locked --bin openuuyc
 (cd crates/vkms && CARGO_TARGET_DIR=../../target cargo build --release --locked)
 cargo deb --no-build
 sudo apt install ./target/debian/openuuyc_*.deb
 ```
 
-安装后从应用菜单启动，或运行 `OpenUUYC`。
+安装后从应用菜单启动，或运行 `openuuyc`。
 
 ## 开发验证
 

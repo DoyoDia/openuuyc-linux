@@ -1,22 +1,14 @@
 # Maintainer: risent <shengqi542@gmail.com>
 #
-# Binary package built from a GitHub release of the Linux port
-# (DoyoDia/openuuyc-linux), which build-pacman.yml publishes for every v* tag.
-# Prefer this over openuuyc-git unless you want to track the branch.
-#
-# AUR submission: copy this directory to an AUR git checkout and run
-#   makepkg --printsrcinfo > .SRCINFO
-# then commit. See packaging/aur/README.md.
+# Source package tracking the Linux port's branch (DoyoDia/openuuyc-linux linux-port).
+# Builds from source; expect 20-40 minutes and ~4 GB of RAM on first build.
+# Template: build.yaml replaces @PKGVER@ from Cargo.toml (hyphens become
+# underscores) and @PKGREL@ with the package revision before invoking makepkg.
 
-pkgname=openuuyc-bin
-pkgver=1.0.2_beta.5.9
-pkgrel=1
-# Releases are tagged v<Cargo version>-linux.<n>. pkgver may not contain a
-# hyphen: it is the Cargo version with `-` as `_`, then `.<n>`, so that
-# pacman sorts a pre-release before its release (an alpha segment loses to a
-# number): 1.0.1.2 -> v1.0.1-linux.2, 1.0.2_beta.5.1 -> v1.0.2-beta.5-linux.1
-_tag=v${pkgver%.*}-linux.${pkgver##*.}
-_tag=${_tag//_/-}
+pkgname=openuuyc
+_pkgname=openuuyc
+pkgver=@PKGVER@
+pkgrel=@PKGREL@
 pkgdesc="Third-party UU Remote client (Linux port, X11 and Wayland)"
 arch=('x86_64')
 url="https://github.com/DoyoDia/openuuyc-linux"
@@ -38,40 +30,52 @@ optdepends=(
     'ethtool: remote power-on NIC check'
     'librsvg: SVG file-type icons in host drag preview images'
 )
-provides=('openuuyc')
-conflicts=('openuuyc' 'openuuyc-git')
-# The binary is built with debuginfo stripped and there is nothing to split.
+makedepends=('cargo' 'rust' 'cmake' 'clang' 'nasm' 'pkg-config')
+conflicts=('openuuyc-bin' 'openuuyc-git')
+# The release profile keeps only debuginfo; nothing is left to split out.
 options=('!debug')
-install=openuuyc-bin.install
-# The release archive mirrors the repository layout (see build-pacman.yml),
-# so one versioned download carries both binaries, the desktop files, the
-# systemd units and every license text, and makepkg's source cache never
-# mixes versions.
-_dir=OpenUUYC-${_tag#v}-x86_64-linux
-source=("${url}/releases/download/${_tag}/${_dir}.tar.zst")
+install=openuuyc.install
+source=("$pkgname::git+${url}.git#branch=linux-port")
 sha256sums=('SKIP')
 
+prepare() {
+    cd "$pkgname"
+    # Keep the build reproducible and avoid picking up a developer's local
+    # cargo config; the crates.io index and git checkouts land in $srcdir.
+    export CARGO_HOME="$srcdir/cargo"
+    mkdir -p "$CARGO_HOME"
+}
+
+build() {
+    cd "$pkgname"
+    export CARGO_HOME="$srcdir/cargo"
+    cargo build --release --locked --bin openuuyc
+    # 虚拟显示器辅助程序是独立的 crate（自己的 workspace 与 Cargo.lock），产物落到
+    # 同一个 target/，打包时只认一处。
+    ( cd crates/vkms && CARGO_TARGET_DIR="$srcdir/$pkgname/target" cargo build --release --locked )
+}
+
 package() {
-    cd "$srcdir/$_dir"
-    install -Dm755 OpenUUYC "$pkgdir/usr/bin/OpenUUYC"
-    install -Dm644 packaging/linux/openuuyc.desktop \
+    cd "$pkgname"
+    install -Dm755 target/release/openuuyc "$pkgdir/usr/bin/openuuyc"
+    install -Dm644 package/linux/openuuyc.desktop \
         "$pkgdir/usr/share/applications/openuuyc.desktop"
     install -Dm644 assets/icon-256.png \
         "$pkgdir/usr/share/icons/hicolor/256x256/apps/openuuyc.png"
-    install -Dm644 packaging/linux/60-openuuyc-uinput.rules \
+    install -Dm644 package/linux/60-openuuyc-uinput.rules \
         "$pkgdir/usr/lib/udev/rules.d/60-openuuyc-uinput.rules"
     # 登录自启的被控服务。它跟着 graphical-session.target 走，所以用户要自己
     # `systemctl --user enable app-openuuyc.service`；装包时不能替用户 enable。
-    install -Dm644 packaging/linux/app-openuuyc.service \
+    install -Dm644 package/linux/app-openuuyc.service \
         "$pkgdir/usr/lib/systemd/user/app-openuuyc.service"
-    install -Dm644 packaging/linux/openuuyc.service \
+    install -Dm644 package/linux/openuuyc.service \
         "$pkgdir/usr/lib/systemd/user/openuuyc.service"
     # 被控端加虚拟屏要写内核 VKMS 的 configfs，只有 root 能写，所以这是另一个按需
-    # 启动的系统服务：平时不跑，第一次用到时由套接字拉起（见 openuuyc-bin.install）。
-    install -Dm755 openuuyc-vkms "$pkgdir/usr/bin/openuuyc-vkms"
-    install -Dm644 packaging/linux/openuuyc-vkms.socket \
+    # 启动的系统服务：平时不跑，第一次用到时由套接字拉起（见 openuuyc.install）。
+    install -Dm755 target/release/openuuyc-vkms "$pkgdir/usr/bin/openuuyc-vkms"
+    install -Dm644 package/linux/openuuyc-vkms.socket \
         "$pkgdir/usr/lib/systemd/system/openuuyc-vkms.socket"
-    install -Dm644 packaging/linux/openuuyc-vkms.service \
+    install -Dm644 package/linux/openuuyc-vkms.service \
         "$pkgdir/usr/lib/systemd/system/openuuyc-vkms.service"
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
     install -Dm644 NOTICES.md \

@@ -20,7 +20,7 @@ PartOf=graphical-session.target
 After=graphical-session.target xdg-desktop-portal.service
 # 程序不在时（例如已卸载，只剩这份写在 ~/.config 里的单元）跳过这次启动：
 # 条件不满足是 skipped 而不是 failed，Restart= 不会再试。
-ConditionFileIsExecutable=/usr/bin/OpenUUYC
+ConditionFileIsExecutable=/usr/bin/openuuyc
 # 与 Sunshine 的用户单元相同：偶尔崩溃照样拉起，一启动就崩的约 25 秒后停下，
 # 不会无休止地重启、刷日志。
 StartLimitIntervalSec=500
@@ -28,7 +28,7 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/OpenUUYC gui --background
+ExecStart=/usr/bin/openuuyc gui --background
 # 崩了自动回来；从托盘退出是正常退出，不会又被拉起来。
 Restart=on-failure
 RestartSec=5

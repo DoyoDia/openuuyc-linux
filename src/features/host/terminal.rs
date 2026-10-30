@@ -397,7 +397,7 @@ pub(crate) struct LocalSession {
     pub shell: String,
     pub state: &'static str,
     pub created_ms: i64,
-    /// Shown by `OpenUUYC terminal --list` (Linux only).
+    /// Shown by `openuuyc terminal --list` (Linux only).
     pub last_active_ms: i64,
     /// 远程主控是否附着。
     pub remote: bool,

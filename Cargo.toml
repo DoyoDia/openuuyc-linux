@@ -1,15 +1,15 @@
 [package]
 name = "openuuyc"
-version = "1.0.2-beta.5"
-edition = "2024"
+version = "1.0.2-beta.6"
+edition = "2026"
 description = "Third-party Rust client for UU Remote protocol interoperability"
 license-file = "LICENSE"
 publish = false
-default-run = "OpenUUYC"
+default-run = "openuuyc"
 autobins = false
 
 [[bin]]
-name = "OpenUUYC"
+name = "openuuyc"
 path = "src/main.rs"
 
 # `cargo deb` (Linux only): the .deb the Linux workflow builds.
@@ -36,25 +36,25 @@ fonts-noto-cjk | fonts-wqy-microhei | fonts-arphic-uming"""
 recommends = "libpulse0, libpipewire-0.3-0, gnome-keyring | kwalletmanager, libglib2.0-bin, librsvg2-bin, libsdl2-2.0-0"
 suggests = "ethtool"
 assets = [
-    ["target/release/OpenUUYC", "usr/bin/", "755"],
+    ["target/release/openuuyc", "usr/bin/", "755"],
     # 被控端加虚拟屏要写 configfs，只有 root 能写，所以另有一个按需启动的系统服务。
     # 它的两个单元由下面的 systemd-units 装进 /usr/lib/systemd/system。
     ["target/release/openuuyc-vkms", "usr/bin/", "755"],
-    ["packaging/linux/openuuyc.desktop", "usr/share/applications/", "644"],
+    ["package/linux/openuuyc.desktop", "usr/share/applications/", "644"],
     ["assets/icon-256.png", "usr/share/icons/hicolor/256x256/apps/openuuyc.png", "644"],
-    ["packaging/linux/60-openuuyc-uinput.rules", "usr/lib/udev/rules.d/", "644"],
-    ["packaging/linux/app-openuuyc.service", "usr/lib/systemd/user/", "644"],
-    ["packaging/linux/openuuyc.service", "usr/lib/systemd/user/", "644"],
+    ["package/linux/60-openuuyc-uinput.rules", "usr/lib/udev/rules.d/", "644"],
+    ["package/linux/app-openuuyc.service", "usr/lib/systemd/user/", "644"],
+    ["package/linux/openuuyc.service", "usr/lib/systemd/user/", "644"],
     ["README.md", "usr/share/doc/openuuyc/", "644"],
     ["NOTICES.md", "usr/share/doc/openuuyc/", "644"],
     ["LICENSE", "usr/share/doc/openuuyc/licenses/", "644"],
 ]
-# 只为 openuuyc-vkms 的两个单元生成维护者脚本（packaging/linux 里没有自己写的脚本）：
+# 只为 openuuyc-vkms 的两个单元生成维护者脚本（package/linux 里没有自己写的脚本）：
 # 卸载时停掉套接字与服务、daemon-reload，清除时清掉 enable 留下的链接；升级时只
 # try-restart 已经在跑的。enable/start 都关着——装包不会替用户把一个 root 服务开起来，
 # 要用虚拟屏的人自己 `systemctl enable --now openuuyc-vkms.socket`；以前 enable 过的，
 # 升级后保持 enable。
-maintainer-scripts = "packaging/linux"
+maintainer-scripts = "package/linux"
 systemd-units = { unit-name = "openuuyc-vkms", enable = false, start = false }
 
 [dependencies]
@@ -229,8 +229,6 @@ overflow-checks = false
 
 [profile.dev.package.openuuyc-h264]
 opt-level = 3
-
-
 
 [profile.dev.package.openuuyc-h265-syntax]
 opt-level = 3

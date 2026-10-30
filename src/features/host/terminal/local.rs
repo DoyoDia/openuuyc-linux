@@ -420,7 +420,7 @@ fn connect(path: &std::path::Path, allow_start: bool) -> Result<UnixStream> {
         }
         Err(error) => Err(error).with_context(|| {
             format!(
-                "连不上 {}：控制中心没有运行（`OpenUUYC terminal --new` 会自动拉起它）",
+                "连不上 {}：控制中心没有运行（`openuuyc terminal --new` 会自动拉起它）",
                 path.display()
             )
         }),
@@ -645,7 +645,7 @@ pub(crate) fn open_in_terminal(session: u32) -> Result<()> {
 
 /// 在系统终端里重新运行本程序本身，再接上会话。
 ///
-/// 用当前可执行文件的路径而不是写死 `OpenUUYC`：便携运行、`cargo run` 和
+/// 用当前可执行文件的路径而不是写死 `openuuyc`：便携运行、`cargo run` 和
 /// 安装到别的目录时，命令名不一定就是 PATH 里的那一个。Linux 上
 /// `current_exe` 读的就是 `/proc/self/exe`。
 fn attach_arguments(exe: &std::path::Path, session: u32) -> Vec<std::ffi::OsString> {
@@ -715,11 +715,11 @@ mod tests {
     /// 重新运行的是当前可执行文件，参数与 CLI 的形状一致。
     #[test]
     fn the_attach_command_reruns_this_binary() {
-        let arguments = attach_arguments(std::path::Path::new("/opt/openuuyc/OpenUUYC"), 7);
+        let arguments = attach_arguments(std::path::Path::new("/opt/openuuyc/openuuyc"), 7);
         assert_eq!(
             arguments,
             vec![
-                std::ffi::OsString::from("/opt/openuuyc/OpenUUYC"),
+                std::ffi::OsString::from("/opt/openuuyc/openuuyc"),
                 std::ffi::OsString::from("terminal"),
                 std::ffi::OsString::from("7"),
             ]

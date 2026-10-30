@@ -18,7 +18,7 @@ Wayland 会话下被控（让别人控制本机）需要两件事；Xorg 会话�
        KDE:      xdg-desktop-portal-kde
    首次被控时在本机屏幕上点一次「共享」，之后不再询问。
 
-启动：应用菜单里的「OpenUUYC」，或运行 OpenUUYC。登录后自动启动请在
+启动：应用菜单里的「OpenUUYC」，或运行 openuuyc。登录后自动启动请在
 「连接设置 → 启动 → 开机自启」中打开。接入 graphical-session.target 的桌面
 （GNOME、KDE、uwsm、niri 等）上它就是一个用户级单元，等价于：
 
