@@ -16,6 +16,10 @@ pub(crate) enum Feature {
     Microphone,
     PortMapping,
     FileDrop,
+    #[expect(
+        dead_code,
+        reason = "The Linux presenter does not expose the remote annotation UI yet."
+    )]
     Annotation,
     ControlledUpdate,
     CustomBitrate,

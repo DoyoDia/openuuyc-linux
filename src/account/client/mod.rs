@@ -591,6 +591,10 @@ impl AuthenticatedClient {
         Ok(room)
     }
 
+    #[expect(
+        dead_code,
+        reason = "The remote Windows upgrade UI is not wired into the Linux presenter yet."
+    )]
     pub(crate) async fn update_owned_device(&self, device_id: &str, immediate: bool) -> Result<()> {
         crate::account::api::validate_device_id(device_id)?;
         let devices = self.list_devices().await?;

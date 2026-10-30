@@ -36,17 +36,17 @@ pub(crate) fn known_folder(folder: KnownFolder) -> Option<PathBuf> {
 
 /// Windows reparse points and Unix symlinks both break out of a chosen root.
 pub(super) fn is_link(metadata: &std::fs::Metadata) -> bool {
-    { metadata.is_symlink() }
+    metadata.is_symlink()
 }
 
 /// Open flags that refuse to traverse a link at the final component.
 fn no_follow(options: &mut OpenOptions) -> &mut OpenOptions {
-    { options.custom_flags(libc::O_NOFOLLOW) }
+    options.custom_flags(libc::O_NOFOLLOW)
 }
 
 /// Directory handle kept open so the path cannot be swapped mid-transfer.
 fn no_follow_dir(options: &mut OpenOptions) -> &mut OpenOptions {
-    { options.custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY) }
+    options.custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY)
 }
 pub(super) fn safe_relative(name: &str) -> Result<PathBuf> {
     ensure!(

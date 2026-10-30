@@ -174,7 +174,7 @@ pub(crate) fn capture_active() -> bool {
 }
 
 fn foreground_window() -> u64 {
-    { focused_window() }
+    focused_window()
 }
 #[allow(
     dead_code,

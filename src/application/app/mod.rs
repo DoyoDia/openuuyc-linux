@@ -1176,7 +1176,7 @@ impl DeviceCenterApp {
     }
     /// An install, update or uninstall of the Windows components is running.
     pub(super) fn maintenance_busy(&self) -> bool {
-        { false }
+        false
     }
     fn prepare_exit(&mut self) {
         if !self.exit_requested || self.exit_pending || self.exit_ready || self.maintenance_busy() {

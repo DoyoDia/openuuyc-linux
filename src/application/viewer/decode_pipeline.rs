@@ -780,7 +780,6 @@ pub(super) fn forward_decoded_frames(
             width: image.width,
             height: image.height,
             surface,
-            color: timing.color,
             received_at: timing.received_at,
             decoded_at,
             assembly_delay: timing.assembled_at.duration_since(timing.received_at),

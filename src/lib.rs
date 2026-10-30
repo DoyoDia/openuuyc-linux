@@ -1,5 +1,8 @@
 //! OpenUUYC: UU protocol interoperability and Linux application composition.
 
+// Session/peer/control types require a deeper auto-trait evaluation.
+#![recursion_limit = "256"]
+
 #[cfg(not(target_os = "linux"))]
 compile_error!("OpenUUYC Linux only supports Linux targets");
 

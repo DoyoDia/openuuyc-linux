@@ -606,5 +606,5 @@ fn nv12_to_rgba_pixels(
 type PlatformDecoder = crate::platform::decoder::LinuxVideoDecoder;
 
 fn platform_label() -> &'static str {
-    { "VA-API" }
+    "VA-API"
 }

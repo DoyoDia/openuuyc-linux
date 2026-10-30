@@ -2,7 +2,6 @@ use crate::diagnostics::performance::PerformanceMonitor;
 use crate::features::stream_control::StreamControlHandle;
 use crate::media::VideoCodec;
 use crate::media::decoder::RenderSurface;
-use crate::media::video_color::RenderColor;
 use crate::transport::rtc::{
     EncodedVideoFrame, FrameSenderTiming, VideoFrameSink, VideoReceiverFeedback,
 };
@@ -218,7 +217,6 @@ struct DecodedVideoFrame {
     width: u32,
     height: u32,
     surface: RenderSurface,
-    color: RenderColor,
     received_at: Instant,
     decoded_at: Instant,
     assembly_delay: Duration,

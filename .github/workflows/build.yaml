@@ -165,15 +165,6 @@ jobs:
           cp /tmp/pacman-package/*.pkg.tar.zst dist/
           pacman -Qip dist/*.pkg.tar.zst
 
-      - name: Upload the pacman package and release archive
-        uses: actions/upload-artifact@main
-        with:
-          name: release_pacman
-          path: |
-            dist/*.pkg.tar.zst
-            dist/openuuyc-*-x86_64-linux.tar.zst
-          if-no-files-found: error
-
       - name: Release
         uses: softprops/action-gh-release@master
         with:

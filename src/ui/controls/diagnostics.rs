@@ -35,16 +35,6 @@ pub(crate) fn diagnostics_label(ui: &mut egui::Ui, label: &str) -> egui::Respons
     )
 }
 
-pub(crate) fn diagnostics_action(ui: &mut egui::Ui, enabled: bool, label: &str) -> egui::Response {
-    ui.add_enabled_ui(enabled, |ui| {
-        ui.add_sized(
-            vec2(theme::DIAGNOSTICS_ACTION_WIDTH, theme::CONTROL_HEIGHT),
-            super::secondary(label),
-        )
-    })
-    .inner
-}
-
 pub(crate) fn diagnostics_empty(ui: &mut egui::Ui, message: &str) {
     ui.allocate_ui_with_layout(
         vec2(ui.available_width(), theme::DIAGNOSTICS_BODY_MIN_HEIGHT),

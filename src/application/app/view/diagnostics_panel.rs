@@ -8,7 +8,6 @@ enum Tab {
     Device,
     Publication,
     Encoding,
-    // The decode check exercises DXVA11 adapters.
     Sessions,
     Wol,
 }
@@ -16,7 +15,6 @@ enum Tab {
 pub(super) struct ViewState {
     tab: Tab,
     encoder: Option<(u64, Backend)>,
-    decoder: usize,
     publication_refresh: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     publication_error: Option<String>,
     wol_refresh: Option<std::sync::mpsc::Receiver<Result<(), String>>>,

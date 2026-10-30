@@ -114,6 +114,10 @@ impl LocalDiagnostics {
             task.cancel.store(true, Ordering::Release);
         }
     }
+    #[expect(
+        dead_code,
+        reason = "Interactive decoder diagnostics are not implemented on Linux yet."
+    )]
     pub fn probe(&mut self, display: LocalDisplayInfo) {
         if self.busy() {
             return;

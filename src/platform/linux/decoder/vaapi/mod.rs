@@ -15,6 +15,7 @@ use crate::media::decode_api::{DecodeError, VideoDecoderConfig};
 pub(super) use avc::{Frame, FrameData};
 
 /// The shared VA display, for the host encoder that opens its own config on it.
+#[cfg(test)]
 pub(crate) fn shared_display() -> Result<std::rc::Rc<cros_libva::Display>, DecodeError> {
     display::display_handle()
 }

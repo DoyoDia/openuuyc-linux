@@ -8,7 +8,7 @@ pub(crate) use audio_quality::{
 };
 mod dialogs;
 pub(crate) use diagnostics::{
-    diagnostics_action, diagnostics_empty, diagnostics_label, diagnostics_row, diagnostics_table,
+    diagnostics_empty, diagnostics_label, diagnostics_row, diagnostics_table,
 };
 mod host_notice;
 mod inputs;

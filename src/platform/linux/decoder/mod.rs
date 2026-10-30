@@ -13,7 +13,9 @@ mod vaapi;
 
 use std::collections::VecDeque;
 /// VA displays shared with the host encoder.
-pub(crate) use vaapi::{encoder_display, shared_display};
+pub(crate) use vaapi::encoder_display;
+#[cfg(test)]
+pub(crate) use vaapi::shared_display;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CpuFormat {

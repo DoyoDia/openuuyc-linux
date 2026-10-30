@@ -16,12 +16,20 @@ pub(crate) struct Batch {
     pub changes: Vec<DeviceChange>,
 }
 
+#[expect(
+    dead_code,
+    reason = "Retained for resident/GUI device-push replay; Linux currently consumes pushes directly."
+)]
 pub(crate) struct Relay {
     cursor: Cursor,
     entries: VecDeque<(u64, usize, DeviceChange)>,
     bytes: usize,
 }
 
+#[expect(
+    dead_code,
+    reason = "Retained for resident/GUI device-push replay; Linux currently consumes pushes directly."
+)]
 impl Relay {
     pub fn new() -> Self {
         Self {

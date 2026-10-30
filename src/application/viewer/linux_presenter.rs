@@ -596,10 +596,11 @@ impl ConnectingWindowsRunner {
                 }
                 ViewerWindowEvent::Reconnect {
                     alias,
-                    window: _,
+                    window,
                     progress,
                     display,
                 } => {
+                    tracing::debug!(?window, "reconnecting viewer in the shared Linux window");
                     self.close_detached_all();
                     self.screens = None;
                     self.alias = alias.clone();

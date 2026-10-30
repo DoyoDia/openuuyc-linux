@@ -140,7 +140,7 @@ fn cancelled(cancel: &AtomicBool) -> Result<()> {
 /// Not a link: a reparse point on Windows; `symlink_metadata` already
 /// reports a symbolic link as such elsewhere.
 fn plain(m: &fs::Metadata) -> bool {
-    { !m.file_type().is_symlink() }
+    !m.file_type().is_symlink()
 }
 fn regular(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|m| m.is_file() && plain(&m))

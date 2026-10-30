@@ -12,6 +12,10 @@ mod generation;
 mod secret;
 pub(crate) use secret::SecretEntry;
 
+#[expect(
+    dead_code,
+    reason = "Retained for Windows resident-service credential migration; Linux uses the user keyring."
+)]
 pub(crate) fn enroll_resident() -> Result<()> {
     use crate::platform::host_service::vault;
     if vault::applies()? {
@@ -45,6 +49,10 @@ fn ensure_resident_owner() -> Result<()> {
     );
     Ok(())
 }
+#[expect(
+    dead_code,
+    reason = "Retained for Windows resident-service removal; Linux has no portable credential migration."
+)]
 pub(crate) fn restore_portable() -> Result<()> {
     use crate::platform::host_service::vault;
     if !vault::applies()? {
