@@ -34,7 +34,7 @@ jobs:
       - name: Install dependencies
         shell: bash
         run: |
-          pacman -S --noconfirm --needed \
+          pacman -Syu --noconfirm --needed \
             archlinux-keyring base-devel git pkg-config cmake clang nasm rust \
             libva libx11 libxcb libxrandr libxi libxcursor libxfixes \
             libxkbcommon libxkbcommon-x11 wayland libglvnd vulkan-icd-loader \
@@ -131,6 +131,8 @@ jobs:
 
       - name: Get Rust Toolchain
         uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
 
       - name: Install cargo-deb
         uses: taiki-e/install-action@main

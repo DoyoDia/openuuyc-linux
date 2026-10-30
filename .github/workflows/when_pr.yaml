@@ -26,6 +26,8 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
 
       - name: Build openuuyc
         shell: bash
