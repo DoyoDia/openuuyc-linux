@@ -247,6 +247,10 @@ impl RawRouter {
             return;
         };
         let input = target.control.mouse();
+        // Touch goes out as touch; never also as the mouse Windows makes of it.
+        if crate::platform::windows::input::system::touch_promoted() {
+            return;
+        }
         if crate::platform::windows::input::system::own_message() && !input.accepts_host_input() {
             return;
         }
@@ -399,6 +403,13 @@ impl RawRouter {
             return false;
         }
         let mouse = unsafe { raw.data.mouse };
+        // The mouse Windows promotes from a touch or pen contact: the contact
+        // itself already went out through `WindowMouse::touch`.
+        if crate::platform::windows::input::system::touch_message(mouse.ulExtraInformation as usize)
+            || crate::platform::windows::input::system::touch_promoted()
+        {
+            return false;
+        }
         let host_input = mouse.ulExtraInformation as usize
             == crate::platform::windows::input::system::INPUT_MARKER;
         let input = target.control.mouse();
@@ -641,6 +652,35 @@ impl WindowMouse {
 
     pub fn wheel(&self, delta: winit::event::MouseScrollDelta) {
         router().wheel(self.owner, delta);
+    }
+
+    /// Forwards one touchscreen contact on the picture. Returns false when
+    /// it belongs to the local UI and must reach egui untouched.
+    pub fn touch(
+        &self,
+        window: &Window,
+        context: &egui::Context,
+        control: &StreamControlHandle,
+        track: i32,
+        video_size: &VideoSize,
+        event: &winit::event::Touch,
+    ) -> bool {
+        let Some(target) = Target::for_window(window, control, context, track, video_size) else {
+            return false;
+        };
+        // winit reports client-area coordinates; position() converts from
+        // screen coordinates, so make the round trip explicitly.
+        let mut point = POINT {
+            x: event.location.x.round() as i32,
+            y: event.location.y.round() as i32,
+        };
+        // While a file drag owns the pointer no new contact reaches the
+        // remote; contacts already down still lift.
+        let spot = (!control.drag_drop().interactive()
+            && unsafe { ClientToScreen(HWND(target.hwnd as _), &mut point).as_bool() })
+        .then(|| target.position(point, false))
+        .flatten();
+        super::touch::forward(control, self.owner, event, spot)
     }
 
     fn release_capture(&mut self, window: &Window) -> bool {

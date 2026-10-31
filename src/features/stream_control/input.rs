@@ -58,6 +58,26 @@ impl StreamControlHandle {
         Some((screen.id, screen.width, screen.height))
     }
 
+    /// Forwards one touchscreen contact on `track`'s picture. Touch frames
+    /// carry no screen, so the host puts them on its current screen; only
+    /// there, and only on an OpenUUYC host (the official host's handling of
+    /// a desktop controller's touch is unverified), does a gesture go out
+    /// natively. Elsewhere its first contact drives the left button.
+    pub(crate) fn touch(
+        &self,
+        owner: u64,
+        phase: crate::features::remote_input::Phase,
+        id: u32,
+        pressure: f64,
+        spot: Option<crate::features::remote_input::Spot>,
+    ) -> bool {
+        let native = spot.is_some_and(|(screen, ..)| {
+            let s = lock(&self.shared);
+            s.current_screen_id == screen && s.capability.as_ref().is_some_and(|c| c.openuuyc_host)
+        });
+        self.mouse().touch(owner, phase, id, pressure, spot, native)
+    }
+
     pub(crate) fn take_mouse_restore_point(&self, track: i32) -> Option<[f64; 2]> {
         let mut s = lock(&self.shared);
         let screen = s

@@ -29,6 +29,7 @@ mod display_transition;
 mod fullscreen_chrome;
 mod input_gate;
 mod polling_warning;
+mod touch;
 
 #[cfg(windows)]
 mod windows_cursor;

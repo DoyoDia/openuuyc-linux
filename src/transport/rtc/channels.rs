@@ -482,6 +482,7 @@ pub(super) async fn send_remote_input(
                 | InputEvent::Absolute { .. }
                 | InputEvent::Correction { .. } => "movement",
                 InputEvent::Wheel { .. } => "wheel",
+                InputEvent::Touch { .. } => "touch",
                 InputEvent::Heartbeat => "keyboard_heartbeat",
                 InputEvent::Gamepad(_) => "gamepad",
             };
