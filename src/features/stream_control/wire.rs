@@ -82,6 +82,17 @@ pub(crate) fn decode_port_mapping(bytes: &[u8]) -> Result<Option<Vec<u8>>> {
     })
 }
 
+/// Native touch for the binary input channel; the host ignores seq/timestamp
+/// on this payload, exactly as it does for port mapping frames.
+pub(crate) fn encode_touch_input(payload: Vec<u8>) -> Vec<u8> {
+    PbControlMessage {
+        seq: 0,
+        timestamp: 0,
+        payload: Some(PbPayload::InputEvent(payload)),
+    }
+    .encode_to_vec()
+}
+
 // main.proto's complete oneof range, read from the shipped descriptor.
 // Opaque payloads remain mutually exclusive without implementing their
 // non-viewing business operations. Media-specific pending handlers stay in C02.

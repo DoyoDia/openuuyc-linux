@@ -21,7 +21,7 @@ use winit::window::{Cursor, CursorGrabMode, CursorIcon, CustomCursor, Window};
 use super::windows_presenter::fit_rect;
 use super::windows_presenter::title_bar_height_pixels;
 type VideoSize = Arc<Mutex<Option<(u32, u32, u16)>>>;
-use crate::features::remote_input::{BUTTONS, MouseMode, RemoteInput};
+use crate::features::remote_input::{BUTTONS, MouseMode, Phase, RemoteInput};
 use crate::features::stream_control::StreamControlHandle;
 
 #[derive(Clone)]
@@ -247,6 +247,11 @@ impl RawRouter {
             return;
         };
         let input = target.control.mouse();
+        // Touch pans synthesize wheel messages after their own touch frames;
+        // one gesture must stay one input.
+        if input.touch_echo_dead() {
+            return;
+        }
         if crate::platform::windows::input::system::own_message() && !input.accepts_host_input() {
             return;
         }
@@ -496,6 +501,9 @@ impl RawRouter {
                 0,
             )
             || input.mode() == MouseMode::View
+            // A touch on the controls of this session synthesizes the same
+            // messages the host injects; it already went out as native touch.
+            || input.touch_echo_dead()
         {
             return;
         }
@@ -641,6 +649,48 @@ impl WindowMouse {
 
     pub fn wheel(&self, delta: winit::event::MouseScrollDelta) {
         router().wheel(self.owner, delta);
+    }
+
+    /// Forwards one touch contact as native touch. Returns true when the
+    /// event drove remote control, false when it belongs to the local UI and
+    /// must reach egui untouched.
+    pub fn touch(
+        &self,
+        window: &Window,
+        context: &egui::Context,
+        control: &StreamControlHandle,
+        track: i32,
+        video_size: &VideoSize,
+        event: &winit::event::Touch,
+    ) -> bool {
+        let Some(target) = Target::for_window(window, control, context, track, video_size) else {
+            return false;
+        };
+        // winit reports client-area coordinates; position() converts from
+        // screen coordinates, so make the round trip explicitly.
+        let mut point = POINT {
+            x: event.location.x.round() as i32,
+            y: event.location.y.round() as i32,
+        };
+        if !unsafe { ClientToScreen(HWND(target.hwnd as _), &mut point).as_bool() } {
+            return false;
+        }
+        let position = target.position(point, false).map(|(_screen, x, y)| (x, y));
+        let pressure = event
+            .force
+            .map_or(0.0, |force| force.normalized().unwrap_or(0.0));
+        self.input.touch(
+            self.owner,
+            match event.phase {
+                winit::event::TouchPhase::Started => Phase::Start,
+                winit::event::TouchPhase::Moved => Phase::Move,
+                winit::event::TouchPhase::Ended => Phase::End,
+                winit::event::TouchPhase::Cancelled => Phase::Cancel,
+            },
+            u32::try_from(event.id.0).unwrap_or(u32::MAX),
+            pressure,
+            position,
+        )
     }
 
     fn release_capture(&mut self, window: &Window) -> bool {

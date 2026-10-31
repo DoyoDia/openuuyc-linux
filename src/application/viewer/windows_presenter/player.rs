@@ -249,6 +249,21 @@ impl ThreadedWindowsApp {
             window.request_redraw();
             return Ok(());
         }
+        // Native touch passthrough comes next: a contact on the video during
+        // control is remote input, everything else stays with the local UI.
+        if let WindowEvent::Touch(touch) = event
+            && self.mouse.touch(
+                window,
+                &self.egui_context,
+                &self.stream_control,
+                self._session.track_index,
+                &self.renderer.current_video_size,
+                touch,
+            )
+        {
+            window.request_redraw();
+            return Ok(());
+        }
         let response = self.egui_winit.on_window_event(window, event);
         if let WindowEvent::Focused(focused) = event {
             tracing::debug!(focused, mouse_mode = ?self.stream_control.mouse().mode(),
