@@ -1094,6 +1094,14 @@ impl ConnectingWindowsRunner {
             slot.next_repaint = Some(Instant::now());
             return;
         }
+        // A contact on the picture is remote input; everything else stays
+        // with the local UI.
+        if let WindowEvent::Touch(touch) = &event
+            && let DetachedStage::Playing(player) = &mut slot.stage
+            && player.touch(&shell.context, &window, touch)
+        {
+            return;
+        }
         let previous_events = shell.input.egui_input_mut().events.len();
         let response = shell.input.on_window_event(&window, &event);
         let consumed = response.consumed;
@@ -1314,6 +1322,14 @@ impl ApplicationHandler<UiEvent> for ConnectingWindowsRunner {
                 player.update_shortcuts(&shell.context, &window);
             }
             self.schedule(Instant::now());
+            return;
+        }
+        // A contact on the picture is remote input; everything else stays
+        // with the local UI.
+        if let WindowEvent::Touch(touch) = &event
+            && let Stage::Playing(player) = &mut self.stage
+            && player.touch(&shell.context, &window, touch)
+        {
             return;
         }
         let previous_events = shell.input.egui_input_mut().events.len();
@@ -3185,6 +3201,23 @@ impl Player {
         self.motion_remainder = [0.0, 0.0];
         self.input().pause_owner(self.owner);
         self.control().drag_drop().cancel_gesture(true);
+    }
+
+    /// Hands a touchscreen contact to the remote; false leaves it to egui.
+    fn touch(
+        &mut self,
+        context: &egui::Context,
+        window: &Arc<Window>,
+        touch: &winit::event::Touch,
+    ) -> bool {
+        self.update_input_gate(context, window);
+        // A local UI owning input or a file drag keeps new contacts local;
+        // contacts already down still lift.
+        let spot = (!self.local_input_blocked && !self.control().drag_drop().interactive())
+            .then(|| self.point_mapper(context)(touch.location, false))
+            .flatten()
+            .map(|point| (point.screen, point.x, point.y));
+        super::touch::forward(self.control(), self.owner, touch, spot)
     }
 
     /// Returns true when the event was consumed by remote input.

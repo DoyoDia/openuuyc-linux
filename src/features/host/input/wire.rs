@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const MAX_MESSAGE: usize = 256 * 1024;
+/// Contacts one touch frame may carry, as the mobile client sends them.
+pub(crate) const MAX_TOUCH_POINTS: usize = 10;
 pub const MAX_TEXT: usize = 64 * 1024;
 #[derive(Clone, Copy, Serialize, Deserialize)]
 pub(crate) enum Policy {
@@ -337,7 +339,7 @@ pub(crate) fn touch(bytes: &[u8]) -> Result<Option<Event>> {
         return Ok(None);
     };
     ensure!(
-        (1..=4).contains(&touch.kind) && touch.points.len() <= 10,
+        (1..=4).contains(&touch.kind) && touch.points.len() <= MAX_TOUCH_POINTS,
         "触摸类型或触点数量无效"
     );
     let mut ids = std::collections::BTreeSet::new();

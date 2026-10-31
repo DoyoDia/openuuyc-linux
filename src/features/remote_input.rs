@@ -13,13 +13,10 @@ pub(crate) mod polling;
 mod recovery;
 pub(crate) mod touch;
 pub(crate) use recovery::{InputRecovery, InputWork};
-pub(crate) use touch::Phase;
+pub(crate) use touch::{Phase, Spot};
 
 const MAX_EVENTS: usize = 512;
 const MOTION_JITTER: Duration = Duration::from_micros(100);
-/// How long after a lift Windows may still deliver the click it synthesized
-/// from the same contact.
-const TOUCH_ECHO_WINDOW: Duration = Duration::from_millis(80);
 pub(crate) const BUTTONS: [u32; 5] = [1, 2, 16, 32, 64];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -101,7 +98,6 @@ pub(crate) enum InputEvent {
     Gamepad(GamepadEvent),
     /// Native touch, the only binary inhabitant: `kind` plus a full
     /// contact-set snapshot per the host wire, never JSON.
-    #[cfg_attr(not(windows), allow(dead_code))]
     Touch {
         kind: u8,
         points: Vec<Point>,
@@ -251,9 +247,6 @@ struct State {
     accept_host_input: bool,
     queue: VecDeque<InputEvent>,
     touch: touch::Forwarder,
-    /// When the last touch frame was accepted; synthetic mouse clicks trail
-    /// a lift by a few milliseconds.
-    touch_last: Option<Instant>,
     in_flight: bool,
     in_flight_assist: Option<u64>,
     epoch: u64,
@@ -841,9 +834,6 @@ impl RemoteInput {
         {
             // Only the original LMB press belongs to a file handoff. Ordinary
             // focus loss still retires keyboard and other button ownership.
-            if let Some((kind, points)) = s.touch.clear() {
-                s.queue.push_back(InputEvent::Touch { kind, points });
-            }
             if !s.keys.is_empty() || s.held[1..].iter().any(|v| *v) {
                 s.queue.clear();
                 s.keyboard_generation = s.keyboard_generation.wrapping_add(1);
@@ -871,6 +861,10 @@ impl RemoteInput {
                     }
                     s.held[index] = false;
                 }
+            }
+            // After the clear above, so the lift is never dropped with it.
+            if let Some((kind, points)) = s.touch.clear() {
+                s.queue.push_back(InputEvent::Touch { kind, points });
             }
             // A file drag keeps only its submitted left-button hold, never
             // a controller or vibration owned by the window losing focus.
@@ -1093,59 +1087,80 @@ impl RemoteInput {
         self.wake.notify_one();
     }
 
-    /// Forwards one winit touch contact as a native touch frame. Returns
-    /// false when the event belongs to the local UI or control is
-    /// unavailable, leaving it for egui to handle.
-    // The Windows player is the only caller so far.
-    #[cfg_attr(not(windows), allow(dead_code))]
+    /// Forwards one touchscreen contact: as a native frame when `native`
+    /// (decided by the gesture's first contact), otherwise as the emulated
+    /// left button. Returns false when the event belongs to the local UI or
+    /// control is unavailable, leaving it for egui to handle.
     pub fn touch(
         &self,
         owner: u64,
         phase: Phase,
         id: u32,
         pressure: f64,
-        position: Option<(f64, f64)>,
+        spot: Option<Spot>,
+        native: bool,
     ) -> bool {
         let mut s = self.lock();
-        // Run on a copy: a refused claim must leave the remote contact set
-        // untouched. Every claim-refusing path has already lifted it through
-        // release_locked, so dropping the copy loses nothing.
         let mut next = s.touch.clone();
-        let Some((kind, points)) = next.step(phase, id, pressure, position) else {
+        let mut step = next.step(phase, id, pressure, spot, native);
+        if step == touch::Step::Local {
             return false;
-        };
-        if matches!(kind, 1 | 2) && !Self::claim(&mut s, owner) {
+        }
+        if s.owner != Some(owner) {
+            // Only a new contact takes control over. Claiming lifts the
+            // previous owner's contacts, so step again on what is left.
+            if phase != Phase::Start || !Self::claim(&mut s, owner) {
+                return false;
+            }
+            next = s.touch.clone();
+            step = next.step(phase, id, pressure, spot, native);
+        } else if !matches!(
+            step,
+            touch::Step::Frame(3 | 4, _)
+                | touch::Step::Pointer {
+                    button: Some(false),
+                    ..
+                }
+        ) && !Self::claim(&mut s, owner)
+        {
+            // Lifts are release obligations; everything else needs control.
             return false;
         }
         s.touch = next;
-        s.touch_last = Some(Instant::now());
-        // Kind 2 snapshots supersede each other; every other kind is an edge
-        // that must never be folded away. Lifts queue unconditionally as
-        // release obligations, like key and button UPs.
-        let fold = kind == 2 && matches!(s.queue.back(), Some(InputEvent::Touch { kind: 2, .. }));
-        if fold {
-            if let Some(InputEvent::Touch { points: old, .. }) = s.queue.back_mut() {
-                *old = points;
+        match step {
+            touch::Step::Local => return false,
+            touch::Step::Held => {}
+            touch::Step::Frame(kind, points) => {
+                // Kind 2 snapshots supersede each other; every other kind is
+                // an edge that must never be folded away. Lifts queue
+                // unconditionally as release obligations, like key and
+                // button UPs.
+                if kind == 2
+                    && let Some(InputEvent::Touch {
+                        kind: 2,
+                        points: old,
+                    }) = s.queue.back_mut()
+                {
+                    *old = points;
+                } else if matches!(kind, 3 | 4) {
+                    s.queue.push_back(InputEvent::Touch { kind, points });
+                } else {
+                    Self::push(&mut s, InputEvent::Touch { kind, points });
+                }
+                drop(s);
+                self.wake.notify_one();
             }
-        } else if matches!(kind, 3 | 4) {
-            s.queue.push_back(InputEvent::Touch { kind, points });
-        } else if Self::push(&mut s, InputEvent::Touch { kind, points }) {
-            tracing::trace!(kind, "touch frame queued");
+            touch::Step::Pointer { at, button } => {
+                drop(s);
+                if let Some((screen, x, y)) = at {
+                    self.absolute(owner, screen, x, y);
+                }
+                if let Some(down) = button {
+                    self.button(owner, 1, down);
+                }
+            }
         }
-        drop(s);
-        self.wake.notify_one();
         true
-    }
-
-    /// True while touch frames flow or just ended: Windows synthesizes mouse
-    /// clicks from those same contacts, and they must not reach the remote
-    /// desktop a second time.
-    #[cfg_attr(not(windows), allow(dead_code))]
-    pub(crate) fn touch_echo_dead(&self) -> bool {
-        let s = self.lock();
-        !s.touch.is_empty()
-            || s.touch_last
-                .is_some_and(|at| at.elapsed() < TOUCH_ECHO_WINDOW)
     }
 
     pub fn wheel(&self, owner: u64, delta: i32, horizontal: bool) {
@@ -2236,27 +2251,37 @@ mod touch_tests {
         }
     }
 
+    fn touch(
+        input: &RemoteInput,
+        owner: u64,
+        phase: Phase,
+        id: u32,
+        at: Option<(f64, f64)>,
+    ) -> bool {
+        input.touch(owner, phase, id, 0.5, at.map(|(x, y)| (0, x, y)), true)
+    }
+
     #[tokio::test]
     async fn frames_travel_the_binary_channel_and_decode() {
         let input = controlling();
-        assert!(input.touch(1, Phase::Start, 4, 0.5, Some((0.25, 0.75))));
+        assert!(touch(&input, 1, Phase::Start, 4, Some((0.25, 0.75))));
         let first = event(&input).await;
         assert!(!first.event.release());
         let bytes = first.event.encode();
         assert_ne!(bytes.first(), Some(&b'{'));
         assert_eq!(decode(&bytes), (1, vec![(4, 0.25, 0.75)]));
         // A second finger joins as a full snapshot with both contacts.
-        assert!(input.touch(1, Phase::Start, 9, 0.5, Some((0.5, 0.5))));
+        assert!(touch(&input, 1, Phase::Start, 9, Some((0.5, 0.5))));
         let second = event(&input).await;
         assert_eq!(
             decode(&second.event.encode()),
             (2, vec![(4, 0.25, 0.75), (9, 0.5, 0.5)])
         );
         // One finger lifts into a snapshot without it, the last lift is kind 3.
-        assert!(input.touch(1, Phase::End, 4, 0.0, Some((0.3, 0.7))));
+        assert!(touch(&input, 1, Phase::End, 4, Some((0.3, 0.7))));
         let partial = event(&input).await;
         assert_eq!(decode(&partial.event.encode()), (2, vec![(9, 0.5, 0.5)]));
-        assert!(input.touch(1, Phase::End, 9, 0.0, None));
+        assert!(touch(&input, 1, Phase::End, 9, None));
         let lift = event(&input).await;
         assert!(lift.event.release());
         assert_eq!(decode(&lift.event.encode()), (3, vec![]));
@@ -2265,18 +2290,18 @@ mod touch_tests {
     #[tokio::test]
     async fn snapshots_coalesce_before_submission() {
         let input = controlling();
-        input.touch(1, Phase::Start, 4, 0.5, Some((0.1, 0.1)));
+        touch(&input, 1, Phase::Start, 4, Some((0.1, 0.1)));
         let press = event(&input).await;
         input.complete(&press, Ok(()));
         // The first move frame is in flight; later snapshots fold into it.
-        input.touch(1, Phase::Move, 4, 0.5, Some((0.2, 0.2)));
+        touch(&input, 1, Phase::Move, 4, Some((0.2, 0.2)));
         let mut pending = event(&input).await;
         for i in 0..50 {
-            assert!(input.touch(
+            assert!(touch(
+                &input,
                 1,
                 Phase::Move,
                 4,
-                0.5,
                 Some((0.2 + f64::from(i) * 0.001, 0.2))
             ));
         }
@@ -2290,14 +2315,14 @@ mod touch_tests {
         );
         input.complete(&pending, Ok(()));
         // Edges never fold: the lift stays a frame of its own.
-        input.touch(1, Phase::End, 4, 0.0, None);
+        touch(&input, 1, Phase::End, 4, None);
         assert_eq!(input.lock().queue.len(), 1);
     }
 
     #[tokio::test]
     async fn losing_control_lifts_held_touches() {
         let input = controlling();
-        input.touch(1, Phase::Start, 4, 0.5, Some((0.5, 0.5)));
+        touch(&input, 1, Phase::Start, 4, Some((0.5, 0.5)));
         let press = event(&input).await;
         input.complete(&press, Ok(()));
         input.enable(MouseMode::View, false).unwrap();
@@ -2305,19 +2330,70 @@ mod touch_tests {
         assert!(lift.event.release());
         assert_eq!(decode(&lift.event.encode()), (3, vec![]));
         // The gesture tail neither forwards nor revives the contact.
-        assert!(!input.touch(1, Phase::Move, 4, 0.0, Some((0.6, 0.6))));
-        assert!(!input.touch(1, Phase::End, 4, 0.0, None));
-        // The echo window still covers the click synthesized after the lift.
-        assert!(input.touch_echo_dead());
-        tokio::time::sleep(TOUCH_ECHO_WINDOW + Duration::from_millis(20)).await;
-        assert!(!input.touch_echo_dead());
+        assert!(!touch(&input, 1, Phase::Move, 4, Some((0.6, 0.6))));
+        assert!(!touch(&input, 1, Phase::End, 4, None));
+    }
+
+    #[tokio::test]
+    async fn another_window_takes_over_without_reviving_contacts() {
+        let input = controlling();
+        touch(&input, 1, Phase::Start, 4, Some((0.5, 0.5)));
+        let press = event(&input).await;
+        input.complete(&press, Ok(()));
+        // A move from a window that does not own input is refused.
+        assert!(!touch(&input, 2, Phase::Move, 4, Some((0.6, 0.6))));
+        // A new contact there takes over: window 1's finger lifts first,
+        // then the new gesture opens with only its own contact.
+        assert!(touch(&input, 2, Phase::Start, 7, Some((0.25, 0.25))));
+        let lift = event(&input).await;
+        assert_eq!(decode(&lift.event.encode()), (3, vec![]));
+        input.complete(&lift, Ok(()));
+        let open = event(&input).await;
+        assert_eq!(decode(&open.event.encode()), (1, vec![(7, 0.25, 0.25)]));
+    }
+
+    #[tokio::test]
+    async fn emulated_gesture_drives_the_left_button() {
+        let input = controlling();
+        assert!(input.touch(1, Phase::Start, 4, 0.5, Some((3, 0.25, 0.5)), false));
+        let moved = event(&input).await;
+        assert!(matches!(
+            moved.event,
+            InputEvent::Absolute {
+                screen: 3,
+                x: 0.25,
+                y: 0.5
+            }
+        ));
+        input.complete(&moved, Ok(()));
+        let press = event(&input).await;
+        assert!(matches!(
+            press.event,
+            InputEvent::Button {
+                button: 1,
+                down: true
+            }
+        ));
+        input.complete(&press, Ok(()));
+        // A second finger is consumed without reaching the remote.
+        assert!(input.touch(1, Phase::Start, 5, 0.5, Some((3, 0.75, 0.5)), true));
+        assert!(input.lock().queue.is_empty());
+        assert!(input.touch(1, Phase::End, 4, 0.0, None, false));
+        let release = event(&input).await;
+        assert!(matches!(
+            release.event,
+            InputEvent::Button {
+                button: 1,
+                down: false
+            }
+        ));
     }
 
     #[tokio::test]
     async fn local_ui_contacts_are_not_consumed() {
         let input = controlling();
-        assert!(!input.touch(1, Phase::Start, 4, 0.5, None));
-        assert!(!input.touch(1, Phase::Move, 4, 0.5, Some((0.5, 0.5))));
+        assert!(!touch(&input, 1, Phase::Start, 4, None));
+        assert!(!touch(&input, 1, Phase::Move, 4, Some((0.5, 0.5))));
         assert_eq!(input.lock().queue.len(), 0);
     }
 }

@@ -21,7 +21,7 @@ use winit::window::{Cursor, CursorGrabMode, CursorIcon, CustomCursor, Window};
 use super::windows_presenter::fit_rect;
 use super::windows_presenter::title_bar_height_pixels;
 type VideoSize = Arc<Mutex<Option<(u32, u32, u16)>>>;
-use crate::features::remote_input::{BUTTONS, MouseMode, Phase, RemoteInput};
+use crate::features::remote_input::{BUTTONS, MouseMode, RemoteInput};
 use crate::features::stream_control::StreamControlHandle;
 
 #[derive(Clone)]
@@ -247,9 +247,8 @@ impl RawRouter {
             return;
         };
         let input = target.control.mouse();
-        // Touch pans synthesize wheel messages after their own touch frames;
-        // one gesture must stay one input.
-        if input.touch_echo_dead() {
+        // Touch goes out as touch; never also as the mouse Windows makes of it.
+        if crate::platform::windows::input::system::touch_promoted() {
             return;
         }
         if crate::platform::windows::input::system::own_message() && !input.accepts_host_input() {
@@ -404,6 +403,13 @@ impl RawRouter {
             return false;
         }
         let mouse = unsafe { raw.data.mouse };
+        // The mouse Windows promotes from a touch or pen contact: the contact
+        // itself already went out through `WindowMouse::touch`.
+        if crate::platform::windows::input::system::touch_message(mouse.ulExtraInformation as usize)
+            || crate::platform::windows::input::system::touch_promoted()
+        {
+            return false;
+        }
         let host_input = mouse.ulExtraInformation as usize
             == crate::platform::windows::input::system::INPUT_MARKER;
         let input = target.control.mouse();
@@ -501,9 +507,6 @@ impl RawRouter {
                 0,
             )
             || input.mode() == MouseMode::View
-            // A touch on the controls of this session synthesizes the same
-            // messages the host injects; it already went out as native touch.
-            || input.touch_echo_dead()
         {
             return;
         }
@@ -651,9 +654,8 @@ impl WindowMouse {
         router().wheel(self.owner, delta);
     }
 
-    /// Forwards one touch contact as native touch. Returns true when the
-    /// event drove remote control, false when it belongs to the local UI and
-    /// must reach egui untouched.
+    /// Forwards one touchscreen contact on the picture. Returns false when
+    /// it belongs to the local UI and must reach egui untouched.
     pub fn touch(
         &self,
         window: &Window,
@@ -672,25 +674,13 @@ impl WindowMouse {
             x: event.location.x.round() as i32,
             y: event.location.y.round() as i32,
         };
-        if !unsafe { ClientToScreen(HWND(target.hwnd as _), &mut point).as_bool() } {
-            return false;
-        }
-        let position = target.position(point, false).map(|(_screen, x, y)| (x, y));
-        let pressure = event
-            .force
-            .map_or(0.0, |force| force.normalized().unwrap_or(0.0));
-        self.input.touch(
-            self.owner,
-            match event.phase {
-                winit::event::TouchPhase::Started => Phase::Start,
-                winit::event::TouchPhase::Moved => Phase::Move,
-                winit::event::TouchPhase::Ended => Phase::End,
-                winit::event::TouchPhase::Cancelled => Phase::Cancel,
-            },
-            u32::try_from(event.id.0).unwrap_or(u32::MAX),
-            pressure,
-            position,
-        )
+        // While a file drag owns the pointer no new contact reaches the
+        // remote; contacts already down still lift.
+        let spot = (!control.drag_drop().interactive()
+            && unsafe { ClientToScreen(HWND(target.hwnd as _), &mut point).as_bool() })
+        .then(|| target.position(point, false))
+        .flatten();
+        super::touch::forward(control, self.owner, event, spot)
     }
 
     fn release_capture(&mut self, window: &Window) -> bool {
