@@ -36,7 +36,11 @@ impl DeviceCenterApp {
                         RichText::new(format!(
                             "v{}  ·  {} {}",
                             env!("CARGO_PKG_VERSION"),
-                            "Windows",
+                            if cfg!(target_os = "linux") {
+                                "Linux"
+                            } else {
+                                "Windows"
+                            },
                             std::env::consts::ARCH
                         ))
                         .size(crate::ui::theme::SMALL)
