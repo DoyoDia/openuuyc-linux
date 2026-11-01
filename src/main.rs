@@ -108,9 +108,9 @@ enum Commands {
     },
     #[command(hide = true)]
     DisplayRecovery { token: String },
-    /// 列出或接上本机正在运行的被控终端会话
+    /// 列出或接上本机正在运行的被控终端会话，或指定远端设备上的终端
     Terminal {
-        /// 会话名或编号；省略时列出
+        /// 本机会话名或编号；远端会话使用 `--list` 显示的编号
         session: Option<String>,
         /// 只列出会话，不接入
         #[arg(long)]
@@ -118,6 +118,15 @@ enum Commands {
         /// 新建一个会话并直接接上；位置参数作为名字
         #[arg(long)]
         new: bool,
+        /// 对端设备名称（必须唯一且完全匹配）
+        #[arg(long, conflicts_with = "device_id")]
+        device: Option<String>,
+        /// 对端设备 ID，适合脚本和 GUI 调用
+        #[arg(long)]
+        device_id: Option<String>,
+        /// 只经正在运行的控制中心连接，不自己新建对端会话
+        #[arg(long, hide = true)]
+        via_gui: bool,
     },
     #[command(hide = true)]
     PluginVideoHost,
@@ -327,8 +336,26 @@ fn main() -> Result<()> {
             openuuyc::application::capture_agent(&pipe, parent)
         }
         Commands::DisplayRecovery { token } => openuuyc::application::display_recovery(&token),
-        Commands::Terminal { session, list, new } => {
-            openuuyc::application::terminal_attach(session.as_deref(), list, new)
+        Commands::Terminal {
+            session,
+            list,
+            new,
+            device,
+            device_id,
+            via_gui,
+        } => {
+            if device.is_some() || device_id.is_some() {
+                openuuyc::application::terminal_controller(
+                    session.as_deref(),
+                    list,
+                    new,
+                    device,
+                    device_id,
+                    via_gui,
+                )
+            } else {
+                openuuyc::application::terminal_attach(session.as_deref(), list, new)
+            }
         }
         Commands::PluginVideoHost => openuuyc::plugins::video::host(),
         #[cfg(windows)]

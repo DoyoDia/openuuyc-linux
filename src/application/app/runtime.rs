@@ -324,6 +324,15 @@ pub(super) async fn gui_worker_loop(
                         );
                     }
                 }
+                GuiCommand::Terminal { generation, device } => {
+                    if generation == catalog_generation
+                        && logout_task.is_none()
+                        && let Some(client) = &client
+                    {
+                        crate::features::terminal::relay::ensure(Arc::clone(client));
+                        crate::features::terminal::service::start(Arc::clone(client), device);
+                    }
+                }
                 GuiCommand::RefreshAssist => {
                     if assist_lists_task.is_none() {
                         next_assist_refresh = Some(Instant::now());
@@ -915,6 +924,7 @@ pub(super) async fn gui_worker_loop(
             if logout_task.is_some() {
                 continue;
             }
+            crate::features::terminal::relay::ensure(Arc::clone(active_client));
             if media_ready != Some(catalog_generation) {
                 if startup_media.is_none() {
                     let host = active_client.host.clone();

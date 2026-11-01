@@ -23,6 +23,7 @@ mod port_mapping;
 mod power;
 mod remote_diagnostics;
 mod startup;
+mod terminal_control;
 mod terminal_sessions;
 mod update_dialog;
 mod wol_setup;
@@ -86,6 +87,12 @@ pub(super) struct CenterUi {
     host_assist_settings_open: bool,
     host_assist_show_code: bool,
     guest_assist_open: bool,
+    /// 远端终端面板本次打开后是否已经自动新建过，避免空列表时反复开窗。
+    pub(super) terminal_auto_target: Option<String>,
+    /// 当前打开着终端面板的设备，用来告诉服务观察者还在。
+    pub(super) terminal_popup_target: Option<String>,
+    /// 上一次给终端服务续期的时刻；面板开着时每两秒一次。
+    pub(super) terminal_last_touch: Option<Instant>,
     pub(super) shortcuts: crate::application::viewer_shortcuts::Editor,
 
     plugins: crate::plugins::Manager,
@@ -121,6 +128,9 @@ impl CenterUi {
         self.detail_id = None;
         self.edit = None;
         self.power = None;
+        self.terminal_auto_target = None;
+        self.terminal_popup_target = None;
+        self.terminal_last_touch = None;
     }
     pub(super) fn finish_device_operation(&mut self) {
         self.edit = None;
