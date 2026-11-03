@@ -115,6 +115,8 @@ pub(crate) async fn shutdown() {
     crate::features::port_mapping::service::shutdown_all().await;
     crate::features::file_transfer::service::shutdown_all().await;
     crate::diagnostics::remote::service::shutdown_all().await;
+    crate::features::terminal::relay::shutdown_all().await;
+    crate::features::terminal::service::shutdown_all().await;
     super::shared::shutdown_all().await;
 }
 pub(crate) fn start(

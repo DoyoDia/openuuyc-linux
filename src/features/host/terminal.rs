@@ -39,6 +39,9 @@
 //! The handle is chosen by the controller and echoed by the host, so it is the
 //! only thing that identifies a session on the wire.
 
+use crate::features::terminal::protocol::{Frame, FrameType, MAGIC};
+#[cfg(test)]
+use crate::features::terminal::protocol::{HEADER, VERSION};
 use bytes::Bytes;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
@@ -68,12 +71,6 @@ pub(crate) mod local {
     }
 }
 
-/// The four bytes every terminal frame starts with.
-const MAGIC: &[u8; 4] = b"TERM";
-/// Fixed header size, magic included.
-const HEADER: usize = 16;
-/// Only version 1 has ever been seen; refuse anything else rather than guess.
-const VERSION: u8 = 1;
 /// Shells one login may hold.
 const MAX_SESSIONS: usize = 16;
 /// The client rejects a name longer than this and shows its own length hint;
@@ -110,99 +107,6 @@ const MAX_ROWS: u16 = 256;
 /// The size the pty and the model actually get for a requested one.
 fn clamp_size(cols: u16, rows: u16) -> (u16, u16) {
     (cols.clamp(1, MAX_COLS), rows.clamp(1, MAX_ROWS))
-}
-
-/// Frame kinds, in the declaration order the shipped enum uses.
-///
-/// The wire value is `index + 1`, so `open` is 1 and `detach` is 16. The
-/// encoder adds one; both binaries agree on the resulting numbers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FrameType {
-    Open = 1,
-    Stdin = 2,
-    Resize = 3,
-    Close = 4,
-    Stdout = 5,
-    Exit = 6,
-    Signal = 7,
-    Error = 8,
-    ListSessionsReq = 9,
-    ListSessionsResp = 10,
-    KillSessionReq = 11,
-    KillSessionResp = 12,
-    OpenResp = 13,
-    UnlockReq = 14,
-    UnlockResp = 15,
-    Detach = 16,
-}
-
-impl FrameType {
-    fn from_wire(byte: u8) -> Option<Self> {
-        Some(match byte {
-            1 => Self::Open,
-            2 => Self::Stdin,
-            3 => Self::Resize,
-            4 => Self::Close,
-            5 => Self::Stdout,
-            6 => Self::Exit,
-            7 => Self::Signal,
-            8 => Self::Error,
-            9 => Self::ListSessionsReq,
-            10 => Self::ListSessionsResp,
-            11 => Self::KillSessionReq,
-            12 => Self::KillSessionResp,
-            13 => Self::OpenResp,
-            14 => Self::UnlockReq,
-            15 => Self::UnlockResp,
-            16 => Self::Detach,
-            _ => return None,
-        })
-    }
-
-    fn wire(self) -> u8 {
-        self as u8
-    }
-}
-
-/// One decoded `TERM` frame.
-pub(crate) struct Frame {
-    pub(crate) kind: FrameType,
-    pub(crate) session: u32,
-    pub(crate) payload: Vec<u8>,
-}
-
-impl Frame {
-    /// Decodes a frame, or returns `None` for protobuf or malformed data.
-    ///
-    /// A frame is never abandoned halfway: the declared payload length has to
-    /// fit, otherwise a truncated read would be mistaken for a short payload.
-    pub(crate) fn parse(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() < HEADER || &bytes[..4] != MAGIC || bytes[4] != VERSION {
-            return None;
-        }
-        let kind = FrameType::from_wire(bytes[5])?;
-        let session = u32::from_le_bytes(bytes[8..12].try_into().ok()?);
-        let length = u32::from_le_bytes(bytes[12..16].try_into().ok()?) as usize;
-        let payload = bytes.get(HEADER..HEADER.checked_add(length)?)?.to_vec();
-        Some(Self {
-            kind,
-            session,
-            payload,
-        })
-    }
-
-    /// Builds a frame the controller will accept.
-    fn encode(kind: FrameType, session: u32, payload: &[u8]) -> Vec<u8> {
-        let mut out = Vec::with_capacity(HEADER + payload.len());
-        out.extend_from_slice(MAGIC);
-        out.push(VERSION);
-        out.push(kind.wire());
-        out.extend_from_slice(&[0, 0]);
-        out.extend_from_slice(&session.to_le_bytes());
-        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        out.extend_from_slice(payload);
-        out
-    }
 }
 
 /// Lifecycle state of one shell, mirroring the client's `TerminalSessionState`.

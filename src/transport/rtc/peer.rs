@@ -84,13 +84,14 @@ impl NativePeer {
     pub async fn new(ice_servers: Vec<IceServer>, transport: TransportChoice) -> Result<Self> {
         let profile = crate::media::ConnectionMediaOptions::default()
             .resolve(crate::media::LocalDisplayInfo::FALLBACK)?;
-        Self::new_with_profile(ice_servers, transport, profile).await
+        Self::new_with_profile(ice_servers, transport, profile, false).await
     }
 
     pub(crate) async fn new_with_profile(
         mut ice_servers: Vec<IceServer>,
         transport: TransportChoice,
         profile: ConnectionMediaProfile,
+        terminal: bool,
     ) -> Result<Self> {
         let configured_ice_servers = ice_servers.clone();
         let mut ice_url_schemes = BTreeMap::<String, usize>::new();
@@ -216,6 +217,7 @@ impl NativePeer {
             profile,
             core.control.clone(),
             Arc::downgrade(&connection),
+            terminal,
         );
         let microphone = data_channels.stream_control.microphone().clone();
         data_channels.workers.spawn(async move {
@@ -331,6 +333,10 @@ impl NativePeer {
 
     pub(crate) fn stream_control_handle(&self) -> StreamControlHandle {
         self.data_channels.stream_control.clone()
+    }
+
+    pub(crate) fn terminal_transport(&self) -> Arc<crate::features::terminal::client::Transport> {
+        Arc::clone(&self.data_channels.terminal)
     }
 
     pub(crate) fn set_stream_video_stream(&self, codec: VideoCodec, video_track_index: i32) {
@@ -926,6 +932,7 @@ impl NativePeer {
         self.data_channels.stream_control.diagnostics().close();
         self.data_channels.stream_control.clipboard().suspend();
         self.data_channels.port_mapping.close();
+        self.data_channels.terminal.close();
         self.data_channels.stream_control.mouse().close().await;
         self.data_channels.workers.close().await;
         self.data_channels.stream_control.audio().close().await;
@@ -937,6 +944,7 @@ impl Drop for NativePeer {
     fn drop(&mut self) {
         self.data_channels.stream_control.microphone().stop();
         self.data_channels.stream_control.diagnostics().close();
+        self.data_channels.terminal.close();
         self.data_channels.stream_control.clipboard().suspend();
         self.data_channels.stream_control.mouse().set_ready(false);
         // Normal paths await close(). This also retires application tasks on
