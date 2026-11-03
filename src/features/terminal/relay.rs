@@ -46,23 +46,22 @@ fn lock<T>(value: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     value.lock().unwrap_or_else(|error| error.into_inner())
 }
 
+/// Unix 上只用 `$XDG_RUNTIME_DIR`（按用户隔离、0700，和被控端的本机接入
+/// 一样）；没有它就不开令牌通道，CLI 改为自己直连对端。不能退回 `/tmp`：
+/// 别的本机用户可以抢先建好那个目录，读走令牌就能拿到对端的 shell。
+/// Windows 的临时目录本来就在用户自己的配置目录下。
 fn runtime_dir() -> Option<PathBuf> {
     #[cfg(unix)]
-    if let Some(path) = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
     {
-        return Some(path.join("openuuyc"));
-    }
-    let mut path = std::env::temp_dir();
-    #[cfg(unix)]
-    {
-        // 没有 XDG_RUNTIME_DIR 时退回 /tmp，文件名带上用户号，别撞到别人。
-        path.push(format!("openuuyc-{}", unsafe { libc::geteuid() }));
+        std::env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .map(|path| path.join("openuuyc"))
     }
     #[cfg(not(unix))]
-    path.push("openuuyc");
-    Some(path)
+    {
+        Some(std::env::temp_dir().join("openuuyc"))
+    }
 }
 
 fn endpoint_path() -> Option<PathBuf> {
@@ -73,10 +72,15 @@ fn prepare_directory(path: &std::path::Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
+        use std::os::unix::fs::PermissionsExt;
         std::fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)
-            .create(path)?;
+            .create(path)
+            .context("创建终端控制通道目录失败")?;
+        // 目录早已存在时 mode 不生效；改不了权限说明目录不归我们。
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+            .context("设置终端控制通道目录权限失败")?;
     }
     #[cfg(not(unix))]
     std::fs::create_dir_all(path)?;
@@ -123,11 +127,19 @@ pub(crate) fn read_endpoint() -> Option<Endpoint> {
     serde_json::from_slice(&bytes).ok()
 }
 
-/// GUI 登录后调用；账号换了就换一条监听。
+/// 有没有地方放令牌文件，也就是 GUI 能不能把终端窗口接进来。
+pub(crate) fn available() -> bool {
+    endpoint_path().is_some()
+}
+
+/// GUI 登录后调用；账号换了就换一条监听。同一账号监听失败后不再重试，
+/// 免得每轮主循环都起一次、刷一条警告。
 pub(crate) fn ensure(client: std::sync::Arc<AuthenticatedClient>) {
+    if !available() {
+        return;
+    }
     let mut server = lock(server());
     if let Some(current) = server.as_ref()
-        && !current.done.is_cancelled()
         && std::sync::Arc::ptr_eq(&current.client, &client)
     {
         return;

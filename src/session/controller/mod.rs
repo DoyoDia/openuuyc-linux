@@ -202,9 +202,7 @@ impl ControllerConnection {
             profile.stream_fps = settings.frame_rate.value(display);
             profile.decoder_fps_cap = display.refresh_hz.max(profile.stream_fps);
         }
-        if !dedicated
-            && let Some(session) = shared::get(&key)
-        {
+        if !dedicated && let Some(session) = shared::get(&key) {
             return Self::from_shared(session, profile, false);
         }
         if device.participant_count() > 0 && takeover.is_none() {
@@ -288,9 +286,7 @@ impl ControllerConnection {
     pub(crate) fn port_mapping_transport(&self) -> Arc<crate::features::port_mapping::Transport> {
         self.peer.port_mapping()
     }
-    pub(crate) fn terminal_transport(
-        &self,
-    ) -> Arc<crate::features::terminal::client::Transport> {
+    pub(crate) fn terminal_transport(&self) -> Arc<crate::features::terminal::client::Transport> {
         self.peer.terminal_transport()
     }
     pub(crate) async fn wait_port_mapping_ready(&self) -> Result<()> {

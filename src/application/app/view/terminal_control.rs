@@ -21,6 +21,12 @@ impl super::DeviceCenterApp {
     /// 在系统终端里打开 CLI，让它经控制中心的终端服务接入对端。
     /// `session` 为 None 表示新建一个 shell 再接入。
     pub(super) fn launch_remote_terminal(&mut self, target: &str, session: Option<u32>) {
+        if !crate::features::terminal::relay::available() {
+            self.status = super::StatusMessage::error(
+                "没有设置 XDG_RUNTIME_DIR，终端窗口无法接到控制中心；请改用命令行 OpenUUYC terminal",
+            );
+            return;
+        }
         let exe = match std::env::current_exe() {
             Ok(exe) => exe,
             Err(error) => {

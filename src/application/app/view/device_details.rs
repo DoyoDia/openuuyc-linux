@@ -744,14 +744,10 @@ impl DeviceCenterApp {
                 )
                 .clicked();
                 let terminal_rect = egui::Rect::from_min_size(
-                    at(
-                        pad + (power_count + 2) as f32 * (button_w + gap),
-                        power_y,
-                    ),
+                    at(pad + (power_count + 2) as f32 * (button_w + gap), power_y),
                     vec2(button_w, theme::CONTROL_HEIGHT),
                 );
-                let mut terminal_ui =
-                    ui.new_child(egui::UiBuilder::new().max_rect(terminal_rect));
+                let mut terminal_ui = ui.new_child(egui::UiBuilder::new().max_rect(terminal_rect));
                 let viewer_open = self.viewer_for_device(&id).is_some();
                 let terminal_button = detail_button(
                     &mut terminal_ui,
@@ -777,8 +773,7 @@ impl DeviceCenterApp {
                     self.center_ui.terminal_last_touch = None;
                 }
                 let popup_id = egui::Id::new(("terminal-popup", &id));
-                let state =
-                    crate::features::terminal::service::snapshot(&controller_id, &id);
+                let state = crate::features::terminal::service::snapshot(&controller_id, &id);
                 let empty_ready = state.as_ref().is_some_and(|state| {
                     state.phase == crate::features::terminal::service::Phase::Ready
                         && state.listed
@@ -795,12 +790,13 @@ impl DeviceCenterApp {
                     .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                     .show(|ui| {
                         ui.set_width(360.0);
-                        ui.ctx()
-                            .request_repaint_after(Duration::from_millis(500));
+                        ui.ctx().request_repaint_after(Duration::from_millis(500));
                         ui.spacing_mut().item_spacing = egui::vec2(8.0, 10.0);
                         ui.horizontal(|ui| {
                             ui.label(
-                                egui::RichText::new("远端终端").size(theme::SECTION).strong(),
+                                egui::RichText::new("远端终端")
+                                    .size(theme::SECTION)
+                                    .strong(),
                             );
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
@@ -895,9 +891,7 @@ impl DeviceCenterApp {
                                     );
                                 }
                                 ui.separator();
-                                if ui
-                                    .add(crate::ui::controls::secondary("新建终端"))
-                                    .clicked()
+                                if ui.add(crate::ui::controls::secondary("新建终端")).clicked()
                                 {
                                     manual_new = true;
                                 }
@@ -927,11 +921,7 @@ impl DeviceCenterApp {
                     self.center_ui.terminal_last_touch = None;
                 }
                 let auto_target = self.center_ui.terminal_auto_target.as_deref();
-                if manual_new
-                    || (popup_open
-                        && empty_ready
-                        && auto_target != Some(id.as_str()))
-                {
+                if manual_new || (popup_open && empty_ready && auto_target != Some(id.as_str())) {
                     self.center_ui.terminal_auto_target = Some(id.clone());
                     self.launch_remote_terminal(&id, None);
                 } else if !popup_open && auto_target == Some(id.as_str()) {
