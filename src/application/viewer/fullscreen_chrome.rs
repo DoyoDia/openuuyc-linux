@@ -115,6 +115,21 @@ impl FullscreenChrome {
         false
     }
 
+    /// A press on the video while a player menu is open closes the menu, so
+    /// the floating bar can collapse again. The menu blocks remote input, so
+    /// this press would otherwise do nothing.
+    pub(in crate::application::viewer) fn dismisses_menu(&self, ctx: &egui::Context) -> bool {
+        self.active
+            && ctx
+                .input(|i| {
+                    i.pointer
+                        .primary_pressed()
+                        .then(|| i.pointer.interact_pos())
+                        .flatten()
+                })
+                .is_some_and(|p| outside_controls(ctx, p))
+    }
+
     pub(in crate::application::viewer) fn show<R: Default>(
         &mut self,
         ctx: &egui::Context,
@@ -422,5 +437,58 @@ mod tests {
         chrome.sync_mode(true, false);
         assert!(chrome.expanded);
         assert!(!chrome.ball_enabled);
+    }
+    #[test]
+    fn a_press_on_the_video_closes_menus_but_not_one_on_the_controls() {
+        fn menu(ui: &mut egui::Ui) {
+            egui::Window::new("settings")
+                .fixed_pos(egui::pos2(500.0, 40.0))
+                .show(ui.ctx(), |ui| ui.label("menu"));
+        }
+        fn press(ctx: &egui::Context, chrome: &FullscreenChrome, at: egui::Pos2) -> bool {
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                ..Default::default()
+            };
+            input.events = vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ];
+            let mut dismissed = false;
+            let mut output = ctx.run_ui(input, |ui| {
+                dismissed = chrome.dismisses_menu(ui.ctx());
+                menu(ui);
+            });
+            output.textures_delta.clear();
+            // Release so the next frame starts a fresh press.
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events: vec![egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                    ..Default::default()
+                },
+                menu,
+            );
+            output.textures_delta.clear();
+            dismissed
+        }
+        let ctx = egui::Context::default();
+        let mut chrome = FullscreenChrome::default();
+        assert!(!press(&ctx, &chrome, egui::pos2(100.0, 400.0)));
+        chrome.sync_mode(true, false);
+        assert!(press(&ctx, &chrome, egui::pos2(100.0, 400.0)));
+        assert!(!press(&ctx, &chrome, egui::pos2(510.0, 50.0)));
     }
 }

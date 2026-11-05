@@ -518,6 +518,10 @@ impl ThreadedWindowsApp {
             let ctx = ui.ctx().clone();
             if fullscreen {
                 let relative = self.stream_control.mouse().relative_mode();
+                if self.fullscreen_chrome.dismisses_menu(&ctx) {
+                    self.stream_control_ui.open = false;
+                    self.plugin_menu_open = false;
+                }
                 let menu_open = self.stream_control_ui.open || self.plugin_menu_open;
                 let pending = self.screen_tabs.is_pending();
                 chrome_action =

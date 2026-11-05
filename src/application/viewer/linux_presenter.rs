@@ -228,6 +228,9 @@ fn draw_window_chrome(
         return false;
     };
     let relative = player.input().relative_mode();
+    if floating.dismisses_menu(&ctx) {
+        player.stream_control_ui.open = false;
+    }
     let menu_open = player.stream_control_ui.open;
     // 切屏、切设备期间浮动栏不收起，等待态一直看得见（Windows 传的是
     // `screen_tabs.is_pending()`，同一个判断）。
