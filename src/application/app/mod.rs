@@ -1205,6 +1205,11 @@ impl crate::ui::App for DeviceCenterApp {
         self.exit_ready
     }
     fn on_close_requested(&mut self) -> bool {
+        if !self.exit_requested {
+            // 所有退出路径（托盘「退出」、信号、没有托盘时关窗口）都经过这里；
+            // 来源各自另记一条，日志里只有这一条时就是关了窗口。
+            tracing::info!(target: "openuuyc", "control center exit requested");
+        }
         self.exit_requested = true;
         self.prepare_exit();
         self.exit_ready

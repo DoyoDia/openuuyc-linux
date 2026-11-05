@@ -173,6 +173,7 @@ mod platform {
             // Zero retains the update behavior of existing senders. Removal closes
             // sessions normally instead of asking remote viewers to wait for an update.
             UPDATE_EXIT.store(wparam.0 != 1, std::sync::atomic::Ordering::Release);
+            tracing::info!(removal = wparam.0 == 1, "另一个进程请求控制中心退出");
             return LRESULT(
                 if crate::ui::window_manager::send(crate::ui::window_manager::Request::Exit).is_ok()
                 {

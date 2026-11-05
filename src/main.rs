@@ -186,6 +186,33 @@ enum Commands {
     },
 }
 
+/// panic 也写进日志文件。默认钩子只打到 stderr，而桌面会话里 stderr 进
+/// journal，常被别的程序刷屏限流吞掉，进程突然消失就查不到原因。默认钩子
+/// 照样运行，终端里看到的输出不变。
+fn log_panics() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let message = info
+            .payload()
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| info.payload().downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("<非文本 panic>");
+        let thread = std::thread::current();
+        tracing::error!(
+            target: "openuuyc",
+            thread = thread.name().unwrap_or("<unnamed>"),
+            location = %info
+                .location()
+                .map_or_else(|| "<unknown>".to_owned(), ToString::to_string),
+            message,
+            backtrace = %std::backtrace::Backtrace::force_capture(),
+            "thread panicked"
+        );
+        default_hook(info);
+    }));
+}
+
 fn main() -> Result<()> {
     openuuyc::application::bootstrap::initialize()?;
     let parsed = parse_cli();
@@ -253,6 +280,7 @@ fn main() -> Result<()> {
         )?)
     };
     tracing::info!(target: "openuuyc", version = env!("CARGO_PKG_VERSION"), "application started");
+    log_panics();
 
     #[cfg(windows)]
     if let Commands::Update { silent, no_elevate } = command {
@@ -438,8 +466,11 @@ fn main() -> Result<()> {
             ))
         }
     };
-    if let Err(error) = &result {
-        tracing::error!(target: "openuuyc", error = %format_args!("{error:#}"), "application stopped with an error");
+    match &result {
+        Ok(()) => tracing::info!(target: "openuuyc", "application exited"),
+        Err(error) => {
+            tracing::error!(target: "openuuyc", error = %format_args!("{error:#}"), "application stopped with an error");
+        }
     }
     drop(_instance);
     #[cfg(windows)]

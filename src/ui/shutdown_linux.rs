@@ -25,6 +25,10 @@ const SIGNALS: [libc::c_int; 2] = [libc::SIGTERM, libc::SIGINT];
 /// 自建管道的写端。信号处理函数只读这个原子量。
 static WAKE_WRITE: AtomicI32 = AtomicI32::new(-1);
 static INSTALLED: AtomicBool = AtomicBool::new(false);
+/// 最近一次信号和发信号的进程，处理函数写、后台线程读出来记日志：进程被
+/// 谁结束的，事后只能从这里查。
+static LAST_SIGNAL: AtomicI32 = AtomicI32::new(0);
+static LAST_SENDER: AtomicI32 = AtomicI32::new(0);
 
 /// What each signal had before this module, written once before the handler
 /// is installed and only read afterwards (by the handler too).
@@ -43,6 +47,14 @@ extern "C" fn on_signal(
     // SAFETY: errno is thread-local; everything below is async-signal-safe
     // (sigaction, write) and restores errno for the interrupted code.
     let errno = unsafe { *libc::__errno_location() };
+    LAST_SIGNAL.store(signal, Ordering::Relaxed);
+    // SAFETY: SA_SIGINFO gives a valid siginfo; si_pid only reads it.
+    let sender = if info.is_null() {
+        0
+    } else {
+        unsafe { (*info).si_pid() }
+    };
+    LAST_SENDER.store(sender, Ordering::Relaxed);
     for (index, other) in SIGNALS.into_iter().enumerate() {
         if HANDLED[index].load(Ordering::Relaxed) {
             // SAFETY: a zeroed sigaction is SIG_DFL with an empty mask.
@@ -99,7 +111,25 @@ unsafe fn chain(
 
 /// 让 SIGTERM、SIGINT 变成一次正常退出。进程里只会装一次。
 pub(crate) fn install() -> Result<()> {
-    install_with(|| super::window_manager::send(super::window_manager::Request::Exit).is_ok())
+    install_with(|| {
+        log_signal();
+        super::window_manager::send(super::window_manager::Request::Exit).is_ok()
+    })
+}
+
+fn log_signal() {
+    let signal = LAST_SIGNAL.load(Ordering::Relaxed);
+    let sender = LAST_SENDER.load(Ordering::Relaxed);
+    let command = (sender > 0)
+        .then(|| std::fs::read_to_string(format!("/proc/{sender}/cmdline")).ok())
+        .flatten()
+        .map(|line| line.replace('\0', " ").trim().to_owned());
+    tracing::info!(
+        signal,
+        sender_pid = sender,
+        sender = command.as_deref().unwrap_or("<unknown>"),
+        "收到退出信号，按正常流程退出"
+    );
 }
 
 /// Install the handler; `notify` runs on a background thread for each

@@ -49,7 +49,10 @@ impl ksni::Tray for Item {
             ksni::MenuItem::Separator,
             StandardItem {
                 label: "退出".into(),
-                activate: Box::new(|_| send(super::window_manager::Request::Exit)),
+                activate: Box::new(|_| {
+                    tracing::info!("托盘菜单选择了「退出」");
+                    send(super::window_manager::Request::Exit)
+                }),
                 ..Default::default()
             }
             .into(),
